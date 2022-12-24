@@ -1,9 +1,6 @@
-[submodule "Thirdparty/P256-Cortex-M4"]
-	path = Thirdparty/P256-Cortex-M4
-	url = https://github.com/Emill/P256-Cortex-M4
-[submodule "X25519-Cortex-M4"]
-	path = Thirdparty/X25519-Cortex-M4
-	url = https://github.com/Emill/X25519-Cortex-M4
 [submodule "Thirdparty/LibStuff"]
 	path = Thirdparty/LibStuff
 	url = https://github.com/xor-shift/LibStuff
+[submodule "Thirdparty/P256-Cortex-M4"]
+	path = Thirdparty/P256-Cortex-M4
+	url = https://github.com/xor-shift/P256-Cortex-M4
