@@ -1,0 +1,23 @@
+---
+Language: Cpp
+BasedOnStyle: WebKit
+SpaceAfterTemplateKeyword: false
+AlignEscapedNewlines: Left
+AlignTrailingComments: true
+BreakBeforeInheritanceComma: true
+BreakConstructorInitializers: BeforeComma
+IndentPPDirectives: AfterHash
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: false
+NamespaceIndentation: None
+ColumnLimit: 120
+PointerAlignment: Left
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+ContinuationIndentWidth: 2
+AlignOperands: AlignAfterOperator
+AlignAfterOpenBracket: BlockIndent
+RequiresClausePosition: OwnLine
+#RequiresExpressionIndentation: OuterScope
