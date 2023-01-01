@@ -37,6 +37,20 @@ add_compile_options(-ffunction-sections -fdata-sections -fno-common -fmessage-le
 # Enable assembler files preprocessing
 add_compile_options($<$<COMPILE_LANGUAGE:ASM>:-x$<SEMICOLON>assembler-with-cpp>)
 
+if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
+    message(STATUS "Maximum optimization for speed")
+    add_compile_options(-O3)
+elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
+    message(STATUS "Maximum optimization for speed, debug info included")
+    add_compile_options(-O3 -g)
+elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel")
+    message(STATUS "Maximum optimization for size")
+    add_compile_options(-Os)
+else ()
+    message(STATUS "Minimal optimization, debug info included")
+    add_compile_options(-O0 -g)
+endif ()
+
 include_directories(Core/Inc USB_HOST/App USB_HOST/Target Drivers/STM32F4xx_HAL_Driver/Inc Drivers/STM32F4xx_HAL_Driver/Inc/Legacy Middlewares/Third_Party/FreeRTOS/Source/include Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F Middlewares/ST/STM32_USB_Host_Library/Core/Inc Middlewares/ST/STM32_USB_Host_Library/Class/CDC/Inc Drivers/CMSIS/Device/ST/STM32F4xx/Include Drivers/CMSIS/Include)
 
 add_definitions(-DDEBUG -DUSE_HAL_DRIVER -DSTM32F407xx)
@@ -61,20 +75,6 @@ add_executable(${PROJECT_NAME}.elf ${SOURCES} ${LINKER_SCRIPT})
 target_link_libraries(${PROJECT_NAME}.elf p256-cortex-m4 libstuff)
 
 target_include_directories(${PROJECT_NAME}.elf PRIVATE Core)
-
-if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
-    message(STATUS "Maximum optimization for speed")
-    target_compile_options(${PROJECT_NAME}.elf PUBLIC -O3)
-elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
-    message(STATUS "Maximum optimization for speed, debug info included")
-    target_compile_options(${PROJECT_NAME}.elf PUBLIC -O3 -g)
-elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel")
-    message(STATUS "Maximum optimization for size")
-    target_compile_options(${PROJECT_NAME}.elf PUBLIC -Os)
-else ()
-    message(STATUS "Minimal optimization, debug info included")
-    target_compile_options(${PROJECT_NAME}.elf PUBLIC -O0 -g)
-endif ()
 
 set(HEX_FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}.hex)
 set(BIN_FILE ${PROJECT_BINARY_DIR}/${PROJECT_NAME}.bin)
