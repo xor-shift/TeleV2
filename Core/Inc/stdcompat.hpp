@@ -43,3 +43,9 @@ private:
 // i tried, ok?
 using __uint128_t = uint64_t;
 using __int128_t = int64_t;
+
+namespace Tele {
+
+void set_time(int32_t timestamp);
+
+}

@@ -169,7 +169,15 @@ standard names. */
 /* USER CODE BEGIN Defines */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
 void libtele_trace_task_switched_in();
+void assert_failed(uint8_t *file, uint32_t line);
+
 #define traceTASK_SWITCHED_IN() libtele_trace_task_switched_in();
+
+#undef configTOTAL_HEAP_SIZE
+#define configTOTAL_HEAP_SIZE 61440
+
+#undef configASSERT
+#define configASSERT(expr) ((expr) ? (void)0U : assert_failed((uint8_t *)__FILE__, __LINE__));
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

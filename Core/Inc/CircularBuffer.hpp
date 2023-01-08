@@ -11,7 +11,7 @@ extern "C" {
 }
 
 template<typename T, size_t N>
-    requires std::is_trivial_v<T>
+    requires std::is_trivially_destructible_v<T>
 struct CircularBuffer {
     /// @return
     /// if true, the buffer was previously empty
@@ -19,7 +19,9 @@ struct CircularBuffer {
         uint32_t prev_state = spin_on_action(
           [&](uint32_t state) {
               uint16_t* state_ptr = &reinterpret_cast<uint16_t&>(state);
-              ++state_ptr[0] %= m_buffer.size();
+              if (++state_ptr[0] %= m_buffer.size() == state_ptr[1]) {
+                  ++state_ptr[1] %= m_buffer.size();
+              }
               return state;
           },
           &m_state

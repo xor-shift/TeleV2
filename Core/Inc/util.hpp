@@ -8,7 +8,62 @@
 
 #include "p256.hpp"
 
+#define CCMstatic [[gnu::section(".ccmram")]] static
+
 namespace Tele {
+
+struct BufCharStream {
+    constexpr BufCharStream(std::span<char> buffer)
+        : m_original_buffer(buffer)
+        , m_buffer(buffer) { }
+
+    template<typename Char, typename Traits>
+    constexpr BufCharStream& operator<<(std::basic_string_view<Char, Traits> v) {
+        if (m_buffer.size() < v.size())
+            return *this;
+
+        std::copy(begin(v), end(v), begin(m_buffer));
+        m_buffer = m_buffer.subspan(v.size());
+
+        return *this;
+    }
+
+    constexpr BufCharStream& operator<<(char v) {
+        if (m_buffer.empty())
+            return *this;
+
+        m_buffer[0] = v;
+        m_buffer = m_buffer.subspan(1);
+
+        return *this;
+    }
+
+    constexpr operator std::string_view() const { return { begin(m_original_buffer), begin(m_buffer) }; }
+
+private:
+    std::span<char> m_original_buffer;
+    std::span<char> m_buffer;
+};
+
+template<typename Container> struct PushBackStream {
+    constexpr PushBackStream(Container& container)
+        : m_container(container) { }
+
+    template<typename Char, typename Traits>
+    constexpr PushBackStream& operator<<(std::basic_string_view<Char, Traits> v) {
+        m_container.reserve(m_container.size() + v.size());
+        std::copy(begin(v), end(v), back_inserter(m_container));
+        return *this;
+    }
+
+    constexpr PushBackStream& operator<<(char v) {
+        m_container.push_back(v);
+        return *this;
+    }
+
+private:
+    Container& m_container;
+};
 
 template<std::unsigned_integral T, size_t Extent = std::dynamic_extent>
 constexpr std::string_view to_chars(std::span<T, Extent> container, std::span<char> output, std::endian repr_endian) {
@@ -79,23 +134,6 @@ template<typename T> [[gnu::always_inline]] inline void do_not_optimize(T&& valu
 #else
     asm volatile("" : "+m,r"(value) : : "memory");
 #endif
-}
-
-constexpr uint64_t xoshiro_next(uint64_t (&s)[4]) {
-    const uint64_t result = std::rotl(s[0] + s[3], 23) + s[0];
-
-    const uint64_t t = s[1] << 17;
-
-    s[2] ^= s[0];
-    s[3] ^= s[1];
-    s[1] ^= s[2];
-    s[0] ^= s[3];
-
-    s[2] ^= t;
-
-    s[3] = std::rotl(s[3], 45);
-
-    return result;
 }
 
 P256::PrivateKey get_sk_from_config();
