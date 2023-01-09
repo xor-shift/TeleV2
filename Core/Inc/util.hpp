@@ -4,9 +4,12 @@
 #include <charconv>
 #include <string_view>
 
+#include <cmsis_os.h>
+
+#include <p256.hpp>
+
 #include <Stuff/Maths/Bit.hpp>
 
-#include "p256.hpp"
 
 #define CCMstatic [[gnu::section(".ccmram")]] static
 
@@ -139,5 +142,7 @@ template<typename T> [[gnu::always_inline]] inline void do_not_optimize(T&& valu
 P256::PrivateKey get_sk_from_config();
 
 void start_led_tasks();
+
+std::span<TaskStatus_t> get_tasks(std::span<TaskStatus_t> storage);
 
 }

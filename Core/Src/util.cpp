@@ -37,7 +37,7 @@ P256::PrivateKey get_sk_from_config() {
     return sk;
 }
 
-struct BlinkTask : StaticTask {
+struct BlinkTask : StaticTask<configMINIMAL_STACK_SIZE> {
     constexpr BlinkTask(GPIO_TypeDef* port, uint16_t pin) noexcept
         : m_port(port)
         , m_pin(pin) { }

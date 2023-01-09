@@ -4,23 +4,19 @@
 
 #include <cmsis_os.h>
 #include <main.h>
+
+#include <StaticTask.hpp>
 #include <stream_buffer.h>
 
-template<typename Callback> struct ReceiveTask {
+template<typename Callback> struct ReceiveTask : Tele::StaticTask<128> {
     constexpr ReceiveTask(UART_HandleTypeDef& huart, Callback&& cb = {}) noexcept
         : m_huart(huart)
         , m_callback(std::move(cb)) { }
 
-    void create_buffer() {
+    void create(const char* name) override {
         size_t sz = m_buffer_storage.size();
         m_stream = xStreamBufferCreateStatic(sz, 1, m_buffer_storage.data(), &m_buffer);
-    }
-
-    void create_task() {
-        m_handle = xTaskCreateStatic(
-          ReceiveTask::task, "uart rx task", configMINIMAL_STACK_SIZE, this, tskIDLE_PRIORITY + 2, m_stack,
-          &m_static_task
-        );
+        StaticTask::create(name);
     }
 
     void begin_rx() {
@@ -32,19 +28,6 @@ template<typename Callback> struct ReceiveTask {
         }
     }
 
-    [[noreturn]] void operator()() {
-        for (;;) {
-            void* rx_buf_ptr = reinterpret_cast<void*>(&m_staging_byte);
-            xStreamBufferReceive(m_stream, rx_buf_ptr, 1, portMAX_DELAY);
-            std::invoke(m_callback, m_staging_byte);
-        }
-    }
-
-    [[noreturn]] static void task(void* arg) {
-        auto& self = *reinterpret_cast<ReceiveTask*>(arg);
-        self();
-    }
-
     void isr_rx_event(uint16_t start_idx, uint16_t end_idx) {
         std::span<uint8_t> rx_buffer { m_uart_rx_buffer };
         rx_buffer = rx_buffer.subspan(start_idx, end_idx - start_idx);
@@ -53,6 +36,15 @@ template<typename Callback> struct ReceiveTask {
             std::ignore = std::ignore;
 
         xStreamBufferSendFromISR(m_stream, rx_buffer.data(), rx_buffer.size(), nullptr);
+    }
+
+protected:
+    [[noreturn]] void operator()() override {
+        for (;;) {
+            void* rx_buf_ptr = reinterpret_cast<void*>(&m_staging_byte);
+            xStreamBufferReceive(m_stream, rx_buf_ptr, 1, portMAX_DELAY);
+            std::invoke(m_callback, m_staging_byte);
+        }
     }
 
 private:
@@ -69,32 +61,25 @@ private:
 
     TaskHandle_t m_handle;
 
-    StackType_t m_stack[configMINIMAL_STACK_SIZE];
+    StackType_t m_stack[256];
     StaticTask_t m_static_task;
 };
 
-struct TransmitTask {
+struct TransmitTask : Tele::StaticTask<128> {
     constexpr TransmitTask(UART_HandleTypeDef& huart) noexcept
         : m_huart(huart) { }
 
-    void create() {
-        create_buffer();
-        create_task();
-    }
-
-    void create_buffer() {
+    void create(const char* name) override {
         size_t sz = m_buffer_storage.size();
         m_stream = xStreamBufferCreateStatic(sz, 1, m_buffer_storage.data(), &m_buffer);
+
+        StaticTask::create(name);
     }
 
-    void create_task() {
-        m_handle = xTaskCreateStatic(
-          TransmitTask::task, "uart tx task", configMINIMAL_STACK_SIZE, this, tskIDLE_PRIORITY + 2, m_stack,
-          &m_static_task
-        );
-    }
+    constexpr StreamBufferHandle_t& stream() { return m_stream; }
 
-    [[noreturn]] void operator()() {
+protected:
+    [[noreturn]] void operator()() override {
         for (;;) {
             size_t pending_size = 0;
 
@@ -113,13 +98,6 @@ struct TransmitTask {
         }
     }
 
-    [[noreturn]] static void task(void* arg) {
-        auto& self = *reinterpret_cast<TransmitTask*>(arg);
-        self();
-    }
-
-    constexpr StreamBufferHandle_t& stream() { return m_stream; }
-
 private:
     UART_HandleTypeDef& m_huart;
 
@@ -129,8 +107,8 @@ private:
     StaticStreamBuffer_t m_buffer;
     StreamBufferHandle_t m_stream;
 
-    TaskHandle_t m_handle;
+    //TaskHandle_t m_handle;
 
-    StackType_t m_stack[configMINIMAL_STACK_SIZE];
-    StaticTask_t m_static_task;
+    //StackType_t m_stack[256];
+    //StaticTask_t m_static_task;
 };

@@ -170,11 +170,18 @@ standard names. */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
 void libtele_trace_task_switched_in();
 void assert_failed(uint8_t *file, uint32_t line);
+uint32_t HAL_GetTick();
+void initialize_hf_ticks();
+extern uint32_t g_high_frequency_ticks;
 
 #define traceTASK_SWITCHED_IN() libtele_trace_task_switched_in();
 
 #undef configTOTAL_HEAP_SIZE
 #define configTOTAL_HEAP_SIZE 61440
+
+#define configGENERATE_RUN_TIME_STATS 1
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS initialize_hf_ticks
+#define portGET_RUN_TIME_COUNTER_VALUE() g_high_frequency_ticks
 
 #undef configASSERT
 #define configASSERT(expr) ((expr) ? (void)0U : assert_failed((uint8_t *)__FILE__, __LINE__));

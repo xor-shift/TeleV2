@@ -1,33 +1,34 @@
 #pragma once
 
-#include <StaticTask.hpp>
+#include "semphr.h"
 #include <LIS3DSH.hpp>
+#include <StaticTask.hpp>
 
 namespace Tele {
 
 template<typename Callback>
-struct GyroTask {
+struct GyroTask : StaticTask<2048> {
     constexpr GyroTask(Callback&& callback = {})
-      :m_callback(std::move(callback)) {}
-
-    ~GyroTask() noexcept = default;
-
-    void create(const char* name) {
-        const size_t stack_size = sizeof(m_stack) / sizeof(m_stack[0]);
-        const auto prio = tskIDLE_PRIORITY + 2;
-
-        m_handle = xTaskCreateStatic(GyroTask::task, name, stack_size, this, prio, m_stack, &m_static_task);
+      :m_callback(std::move(callback)) {
+        m_sema = xSemaphoreCreateBinary();
     }
+
+    ~GyroTask() noexcept override = default;
 
     [[gnu::cold]] static void task(void* arg) {
         auto& self = *reinterpret_cast<GyroTask*>(arg);
         self();
     }
 
-    constexpr TaskHandle_t handle() const { return m_handle; }
+    void notify_isr() {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        vTaskNotifyGiveFromISR(handle(), &xHigherPriorityTaskWoken);
+        //xSemaphoreGiveFromISR(m_sema, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
 
 protected:
-    [[noreturn]] void operator()() {
+    [[noreturn]] void operator()() override {
         m_state.reboot();
 
         const uint8_t whoami_res = m_state.whoami();
@@ -37,6 +38,7 @@ protected:
 
         LIS::ControlReg3 config_reg_3 {
             .int1_enable = true,
+            .int_latch = true,
             .dr_enable = true,
         };
 
@@ -44,11 +46,11 @@ protected:
             .x_enable = true,
             .y_enable = true,
             .z_enable = true,
-            .data_rate = LIS::DataRate::Hz3_125,
+            .data_rate = LIS::DataRate::Hz50,
         };
 
         LIS::ControlReg5 config_reg_5 {
-            .full_scale = LIS::FullScale::G4,
+            .full_scale = LIS::FullScale::G16,
             .aa_bandwidth = LIS::AABandwidth::Hz50,
         };
 
@@ -62,11 +64,14 @@ protected:
         for (;;) {
             std::ignore = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-            Stf::Vector<uint16_t, 3> raw_reading = m_state.read_raw();
+            //if (xSemaphoreTake( m_sema, portMAX_DELAY ) == pdFALSE)
+            //    continue;
 
-            m_callback(raw_reading);
+            //vTaskDelay(333);
 
-            std::ignore = raw_reading;
+            m_callback(m_state.read_scaled(LIS::FullScale::G16));
+
+            std::ignore = 0;
         }
     }
 
@@ -79,10 +84,7 @@ private:
         .cs_pin = CS_I2C_SPI_Pin,
     };
 
-    TaskHandle_t m_handle;
-
-    StackType_t m_stack[configMINIMAL_STACK_SIZE];
-    StaticTask_t m_static_task;
+    SemaphoreHandle_t m_sema = NULL;
 };
 
 }

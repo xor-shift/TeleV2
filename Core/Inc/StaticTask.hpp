@@ -4,14 +4,14 @@
 
 namespace Tele {
 
+template<size_t StackSize>
 struct StaticTask {
     virtual ~StaticTask() noexcept = default;
 
-    void create(const char* name) {
-        const size_t stack_size = sizeof(m_stack) / sizeof(m_stack[0]);
+    virtual void create(const char* name) {
         const auto prio = tskIDLE_PRIORITY + 2;
 
-        m_handle = xTaskCreateStatic(StaticTask::task, name, stack_size, this, prio, m_stack, &m_static_task);
+        m_handle = xTaskCreateStatic(StaticTask::task, name, StackSize, this, prio, m_stack, &m_static_task);
     }
 
     [[gnu::cold]] static void task(void* arg) {
@@ -27,7 +27,7 @@ protected:
 private:
     TaskHandle_t m_handle;
 
-    StackType_t m_stack[configMINIMAL_STACK_SIZE];
+    StackType_t m_stack[StackSize];
     StaticTask_t m_static_task;
 };
 
