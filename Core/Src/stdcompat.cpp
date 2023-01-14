@@ -51,10 +51,21 @@ extern "C" void getentropy(void* buffer, size_t length) {
     std::copy(excess_vp, excess_vp + excess_bytes, reinterpret_cast<uint8_t*>(buffer) + length - excess_bytes);
 }
 
+static uint8_t s_pre_kernel_bump_arena[256];
+static std::atomic<uint32_t> s_bump_ptr = 0;
+
 extern "C" void* malloc(size_t sz) {
+    /*if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
+        uint32_t ptr = (s_bump_ptr += sz) - sz;
+        return s_pre_kernel_bump_arena + ptr;
+    }*/
+
     return pvPortMalloc(sz);
 }
 
 extern "C" void free(void* ptr) {
+    if (s_pre_kernel_bump_arena <= ptr && ptr <= s_pre_kernel_bump_arena + 256)
+        return;
+
     return vPortFree(ptr);
 }

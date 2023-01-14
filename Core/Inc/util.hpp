@@ -2,18 +2,46 @@
 
 #include <algorithm>
 #include <charconv>
+#include <functional>
 #include <string_view>
 
-#include <cmsis_os.h>
+#include <fmt/core.h>
 
+#include <cmsis_os.h>
 #include <p256.hpp>
 
 #include <Stuff/Maths/Bit.hpp>
 
-
 #define CCMstatic [[gnu::section(".ccmram")]] static
 
 namespace Tele {
+
+enum class ResetCause {
+    Unknown,
+    LowPower,
+    WindowWatchdog,
+    IndependentWatchdog,
+    // NVIC_SystemReset();
+    Software,
+    PowerOnPowerDown,
+    ExternalResetPin,
+    Brownout,
+};
+
+ResetCause get_reset_cause();
+
+constexpr std::string_view enum_name(ResetCause cause) {
+    switch (cause) {
+    case ResetCause::LowPower: return "low power";
+    case ResetCause::WindowWatchdog: return "window watchdog";
+    case ResetCause::IndependentWatchdog: return "independent watchdog";
+    case ResetCause::Software: return "software";
+    case ResetCause::PowerOnPowerDown: return "poweron/poweroff";
+    case ResetCause::ExternalResetPin: return "external reset pin";
+    case ResetCause::Brownout: return "brownout";
+    default: return "unknown";
+    }
+}
 
 struct BufCharStream {
     constexpr BufCharStream(std::span<char> buffer)
@@ -30,6 +58,8 @@ struct BufCharStream {
 
         return *this;
     }
+
+    constexpr BufCharStream& operator<<(const char* str) { return *this << std::string_view(str); }
 
     constexpr BufCharStream& operator<<(char v) {
         if (m_buffer.empty())
@@ -131,12 +161,36 @@ from_chars(std::span<T, Extent> output, std::string_view input, std::endian repr
     };
 }
 
+template<typename Char, typename Traits = std::char_traits<Char>> struct EscapedString {
+    std::basic_string_view<Char, Traits> data = "";
+};
+
+template<typename Char, typename Traits>
+EscapedString(std::basic_string_view<Char, Traits>) -> EscapedString<Char, Traits>;
+EscapedString(const char*) -> EscapedString<char>;
+
 template<typename T> [[gnu::always_inline]] inline void do_not_optimize(T&& value) {
 #if defined(__clang__)
     asm volatile("" : "+r,m"(value) : : "memory");
 #else
     asm volatile("" : "+m,r"(value) : : "memory");
 #endif
+}
+
+template<typename T, typename Fn>
+constexpr size_t in_chunks(std::span<T> span, size_t chunk_sz, Fn&& fn) {
+    if (chunk_sz == 0)
+        return 0;
+
+    size_t executions = 0;
+
+    while (++executions, !span.empty()) {
+        size_t sz = std::min(chunk_sz, span.size());
+        size_t real_sz = std::invoke(fn, std::span<T>(span.subspan(0, sz)));
+        span = span.subspan(real_sz);
+    }
+
+    return executions;
 }
 
 P256::PrivateKey get_sk_from_config();
@@ -146,3 +200,51 @@ void start_led_tasks();
 std::span<TaskStatus_t> get_tasks(std::span<TaskStatus_t> storage);
 
 }
+
+template<typename Char, typename Traits> struct fmt::formatter<Tele::EscapedString<Char, Traits>> {
+    template<typename ParseContext> constexpr auto parse(ParseContext& ctx) {
+        auto it = ctx.begin();
+
+        return it;
+    }
+
+    template<typename FormatContext> auto format(Tele::EscapedString<Char, Traits> const& string, FormatContext& ctx) {
+        auto it = ctx.out();
+
+        for (char c : string.data) {
+            char simple_escape = '\0';
+
+            switch (c) {
+            case '\a': simple_escape = 'a'; break;
+            case '\b': simple_escape = 'b'; break;
+            case '\t': simple_escape = 't'; break;
+            case '\n': simple_escape = 'n'; break;
+            case '\v': simple_escape = 'v'; break;
+            case '\f': simple_escape = 'f'; break;
+            case '\r': simple_escape = 'r'; break;
+            case '\"': simple_escape = '"'; break;
+            case '\'': simple_escape = '\''; break;
+            case '\\': simple_escape = '\\'; break;
+            case '\0': simple_escape = '0'; break;
+            default: break;
+            }
+
+            if (simple_escape != '\0') {
+                *it++ = '\\';
+                *it++ = simple_escape;
+                continue;
+            }
+
+            // is c printable?
+            if ('~' >= c && c >= ' ') [[likely]] {
+                *it++ = c;
+                continue;
+            }
+
+            uint8_t byte = static_cast<uint8_t>(c);
+            it = fmt::format_to(it, "\\0{:02o}", byte);
+        }
+
+        return it;
+    }
+};

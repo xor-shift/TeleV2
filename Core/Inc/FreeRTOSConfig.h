@@ -183,6 +183,9 @@ extern uint32_t g_high_frequency_ticks;
 #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS initialize_hf_ticks
 #define portGET_RUN_TIME_COUNTER_VALUE() g_high_frequency_ticks
 
+#define configUSE_MALLOC_FAILED_HOOK 1
+#define configCHECK_FOR_STACK_OVERFLOW 1
+
 #undef configASSERT
 #define configASSERT(expr) ((expr) ? (void)0U : assert_failed((uint8_t *)__FILE__, __LINE__));
 /* USER CODE END Defines */

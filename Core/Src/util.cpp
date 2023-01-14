@@ -13,6 +13,22 @@
 
 namespace Tele {
 
+ResetCause get_reset_cause() {
+#define CAUSE_FACTORY(_flg, _res) else if (__HAL_RCC_GET_FLAG(_flg) != 0u) cause = _res
+    ResetCause cause = ResetCause::Unknown;
+
+    if (false) {} // NOLINT(readability-simplify-boolean-expr)
+    CAUSE_FACTORY(RCC_FLAG_LPWRRST, ResetCause::LowPower);
+    CAUSE_FACTORY(RCC_FLAG_WWDGRST, ResetCause::WindowWatchdog);
+    CAUSE_FACTORY(RCC_FLAG_IWDGRST, ResetCause::IndependentWatchdog);
+    CAUSE_FACTORY(RCC_FLAG_SFTRST, ResetCause::Software);
+    CAUSE_FACTORY(RCC_FLAG_PORRST, ResetCause::PowerOnPowerDown);
+    CAUSE_FACTORY(RCC_FLAG_PINRST, ResetCause::ExternalResetPin);
+    CAUSE_FACTORY(RCC_FLAG_BORRST, ResetCause::Brownout);
+
+    return cause;
+}
+
 P256::PrivateKey get_sk_from_config() {
     P256::PrivateKey sk;
     Tele::from_chars(std::span(sk.d), Tele::Config::sk_text, std::endian::little);

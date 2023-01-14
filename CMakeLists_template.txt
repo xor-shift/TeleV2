@@ -62,16 +62,17 @@ add_link_options(-Wl,-gc-sections,--print-memory-usage,-Map=$${PROJECT_BINARY_DI
 add_link_options(-mcpu=${mcpu} -mthumb -mthumb-interwork)
 add_link_options(-T $${LINKER_SCRIPT})
 
-set(LibStuffUseFMT OFF)
+set(LibStuffUseFMT ON)
 set(LibStuffCompileTests OFF)
 set(LibStuffCompileBenchmarks OFF)
 set(LibStuffCompileExamples OFF)
 add_subdirectory(Thirdparty/LibStuff)
 
 add_subdirectory(Thirdparty/P256-Cortex-M4)
+add_subdirectory(Thirdparty/fmt)
 
 add_executable($${PROJECT_NAME}.elf $${SOURCES} $${LINKER_SCRIPT})
-target_link_libraries($${PROJECT_NAME}.elf p256-cortex-m4 libstuff)
+target_link_libraries($${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt)
 
 target_include_directories($${PROJECT_NAME}.elf PRIVATE Core)
 

@@ -1,14 +1,17 @@
 #pragma once
 
 #include <functional>
+#include <span>
+#include <string_view>
 
 #include <cmsis_os.h>
 #include <main.h>
 
+#include "util.hpp"
 #include <StaticTask.hpp>
 #include <stream_buffer.h>
 
-template<typename Callback> struct ReceiveTask : Tele::StaticTask<128> {
+template<typename Callback> struct ReceiveTask : Tele::StaticTask<1024> {
     constexpr ReceiveTask(UART_HandleTypeDef& huart, Callback&& cb = {}) noexcept
         : m_huart(huart)
         , m_callback(std::move(cb)) { }
@@ -32,18 +35,20 @@ template<typename Callback> struct ReceiveTask : Tele::StaticTask<128> {
         std::span<uint8_t> rx_buffer { m_uart_rx_buffer };
         rx_buffer = rx_buffer.subspan(start_idx, end_idx - start_idx);
 
-        if (rx_buffer.size() > 1)
-            std::ignore = std::ignore;
-
-        xStreamBufferSendFromISR(m_stream, rx_buffer.data(), rx_buffer.size(), nullptr);
+        Tele::in_chunks<uint8_t>(rx_buffer, m_buffer_storage.size() / 2, [this](std::span<uint8_t> chunk) {
+            BaseType_t higher_prio_task_awoken = pdFALSE;
+            size_t res = xStreamBufferSendFromISR(m_stream, chunk.data(), chunk.size(), &higher_prio_task_awoken);
+            portYIELD_FROM_ISR(higher_prio_task_awoken);
+            return res;
+        });
     }
 
 protected:
     [[noreturn]] void operator()() override {
         for (;;) {
-            void* rx_buf_ptr = reinterpret_cast<void*>(&m_staging_byte);
-            xStreamBufferReceive(m_stream, rx_buf_ptr, 1, portMAX_DELAY);
-            std::invoke(m_callback, m_staging_byte);
+            void* rx_buf_ptr = reinterpret_cast<void*>(m_staging_bytes.data());
+            size_t amt_read = xStreamBufferReceive(m_stream, rx_buf_ptr, m_staging_bytes.size(), portMAX_DELAY);
+            std::invoke(m_callback, std::string_view(m_staging_bytes.data(), amt_read));
         }
     }
 
@@ -51,18 +56,13 @@ private:
     UART_HandleTypeDef& m_huart;
     Callback m_callback;
 
-    std::array<uint8_t, 16> m_uart_rx_buffer;
+    std::array<uint8_t, 64> m_uart_rx_buffer;
 
-    uint8_t m_staging_byte;
+    std::array<char, 32> m_staging_bytes;
 
     std::array<uint8_t, 32> m_buffer_storage;
     StaticStreamBuffer_t m_buffer;
     StreamBufferHandle_t m_stream;
-
-    TaskHandle_t m_handle;
-
-    StackType_t m_stack[256];
-    StaticTask_t m_static_task;
 };
 
 struct TransmitTask : Tele::StaticTask<128> {
@@ -89,8 +89,20 @@ protected:
                       = xStreamBufferReceive(m_stream, m_uart_buffer.data(), m_uart_buffer.size(), portMAX_DELAY);
                 }
 
+                if (m_uart_buffer[0] == 'A' && m_uart_buffer[1] == '1') {
+                    std::ignore = std::ignore;
+                }
+
                 while (HAL_UART_Transmit_DMA(&m_huart, m_uart_buffer.data(), pending_size) != HAL_OK) {
-                    osThreadYield();
+                    taskYIELD();
+                }
+
+                for (;;) {
+                    HAL_UART_StateTypeDef status = HAL_UART_GetState(&m_huart);
+                    if (status == HAL_UART_STATE_READY || status == HAL_UART_STATE_BUSY_RX)
+                        break;
+
+                    taskYIELD();
                 }
 
                 pending_size = 0;
@@ -106,9 +118,4 @@ private:
     std::array<uint8_t, 32> m_buffer_storage;
     StaticStreamBuffer_t m_buffer;
     StreamBufferHandle_t m_stream;
-
-    //TaskHandle_t m_handle;
-
-    //StackType_t m_stack[256];
-    //StaticTask_t m_static_task;
 };

@@ -6,10 +6,9 @@
 
 namespace Tele {
 
-template<typename Callback>
-struct GyroTask : StaticTask<2048> {
+template<typename Callback> struct GyroTask : StaticTask<2048> {
     constexpr GyroTask(Callback&& callback = {})
-      :m_callback(std::move(callback)) {
+        : m_callback(std::move(callback)) {
         m_sema = xSemaphoreCreateBinary();
     }
 
@@ -23,7 +22,7 @@ struct GyroTask : StaticTask<2048> {
     void notify_isr() {
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
         vTaskNotifyGiveFromISR(handle(), &xHigherPriorityTaskWoken);
-        //xSemaphoreGiveFromISR(m_sema, &xHigherPriorityTaskWoken);
+        // xSemaphoreGiveFromISR(m_sema, &xHigherPriorityTaskWoken);
         portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 
@@ -46,7 +45,7 @@ protected:
             .x_enable = true,
             .y_enable = true,
             .z_enable = true,
-            .data_rate = LIS::DataRate::Hz50,
+            .data_rate = LIS::DataRate::Hz3_125,
         };
 
         LIS::ControlReg5 config_reg_5 {
@@ -64,10 +63,10 @@ protected:
         for (;;) {
             std::ignore = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-            //if (xSemaphoreTake( m_sema, portMAX_DELAY ) == pdFALSE)
-            //    continue;
+            // if (xSemaphoreTake( m_sema, portMAX_DELAY ) == pdFALSE)
+            //     continue;
 
-            //vTaskDelay(333);
+            // vTaskDelay(333);
 
             m_callback(m_state.read_scaled(LIS::FullScale::G16));
 

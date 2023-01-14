@@ -600,6 +600,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(PDM_OUT_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : USER_BUTTON_Pin */
+  GPIO_InitStruct.Pin = USER_BUTTON_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(USER_BUTTON_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : BOOT1_Pin */
   GPIO_InitStruct.Pin = BOOT1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
@@ -706,14 +712,7 @@ void Error_Handler(void)
   // if (s_error_handler_ignore_errors)
   //     return;
 
-  __disable_irq();
-
-#ifdef NDEBUG
-  NVIC_SystemReset();
-#else
-  asm volatile("BKPT");
-  for (;;) { }
-#endif
+  halt_and_catch_fire(HCF_ERROR_HANDLER, "no clue");
   /* USER CODE END Error_Handler_Debug */
 }
 

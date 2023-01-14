@@ -54,6 +54,17 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
+#define HCF_DIDNT_CATCH_FIRE 0u
+#define HCF_HARD_FAULT 1u
+#define HCF_MMU_FAULT 2u
+#define HCF_BUS_FAULT 3u
+#define HCF_USAGE_FAULT 4u
+#define HCF_RTOS_MALLOC 5u
+#define HCF_RTOS_STACK_OVERFLOW 6u
+#define HCF_WDT_STACK_OVERFLOW 7u
+#define HCF_ERROR_HANDLER 8u
+
+void halt_and_catch_fire(uint32_t, const char*);
 void cpp_init();
 void cpp_os_exit();
 void cpp_assert_failed(const char* file, uint32_t line);
@@ -79,6 +90,8 @@ void initialize_hf_ticks();
 #define OTG_FS_PowerSwitchOn_GPIO_Port GPIOC
 #define PDM_OUT_Pin GPIO_PIN_3
 #define PDM_OUT_GPIO_Port GPIOC
+#define USER_BUTTON_Pin GPIO_PIN_0
+#define USER_BUTTON_GPIO_Port GPIOA
 #define GSM_TX_Pin GPIO_PIN_2
 #define GSM_TX_GPIO_Port GPIOA
 #define GSM_RX_Pin GPIO_PIN_3
