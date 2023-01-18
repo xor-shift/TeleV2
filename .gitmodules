@@ -10,3 +10,6 @@
 [submodule "Thirdparty/date"]
 	path = Thirdparty/date
 	url = https://github.com/HowardHinnant/date
+[submodule "Thirdparty/scnlib"]
+	path = Thirdparty/scnlib
+	url = https://github.com/eliaskosunen/scnlib
