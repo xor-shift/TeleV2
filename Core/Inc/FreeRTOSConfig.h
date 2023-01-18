@@ -176,8 +176,10 @@ extern uint32_t g_high_frequency_ticks;
 
 #define traceTASK_SWITCHED_IN() libtele_trace_task_switched_in();
 
+#define configAPPLICATION_ALLOCATED_HEAP 1
+
 #undef configTOTAL_HEAP_SIZE
-#define configTOTAL_HEAP_SIZE 61440
+#define configTOTAL_HEAP_SIZE 0xF000
 
 #define configGENERATE_RUN_TIME_STATS 1
 #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS initialize_hf_ticks

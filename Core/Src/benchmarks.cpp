@@ -108,4 +108,13 @@ void p256_test(P256::PrivateKey const& sk) {
     }
 }
 
+void test_parse_ip() {
+    std::string_view decimated_v4 = "0.01.2.0x03";
+    std::array<uint8_t, 4> out;
+    bool is_v4;
+    bool res = Tele::parse_ip(decimated_v4, is_v4, out);
+
+    std::ignore = 0;
+}
+
 }

@@ -1,56 +1,39 @@
-#include "UARTTasks.hpp"
-#include "stdcompat.hpp"
+#include <GSM.hpp>
 
+#include <stdcompat.hpp>
+
+#include <atomic>
 #include <charconv>
+#include <chrono>
+
+#include <date/date.h>
 
 #include <CircularBuffer.hpp>
 #include <Globals.hpp>
+#include <UARTTasks.hpp>
+#include <benchmarks.hpp>
 #include <cmsis_os.h>
 #include <main.h>
+#include <queue.h>
 #include <util.hpp>
 
-struct GSMCoordinator : Tele::StaticTask<1024> {
-    UART_HandleTypeDef& huart;
-
-    void isr_rx_event(uint16_t start_idx, uint16_t end_idx) {
-        std::span<uint8_t> rx_buffer { m_uart_rx_buffer };
-        rx_buffer = rx_buffer.subspan(start_idx, end_idx - start_idx);
-        xStreamBufferSendFromISR(m_uart_stream, rx_buffer.data(), rx_buffer.size(), nullptr);
-    }
-
-    void create(const char* name) override {
-        size_t sz = m_uart_buffer_storage.size();
-        m_uart_stream = xStreamBufferCreateStatic(sz, 1, m_uart_buffer_storage.data(), &m_uart_buffer);
-        StaticTask::create(name);
-    }
-
-protected:
-    [[noreturn]] void operator()() override {
-        for (;;) {
-
-        }
-    }
-
-private:
-    std::array<uint8_t, 64> m_uart_rx_buffer;
-
-    std::array<uint8_t, 32> m_uart_buffer_storage;
-    StaticStreamBuffer_t m_uart_buffer;
-    StreamBufferHandle_t m_uart_stream;
-};
-
-static ReceiveTask s_gsm_rx_task {
+/*static ReceiveTask s_gsm_rx_task {
     huart2,
     [](std::string_view line) {
         Log::info("GSM", "Received: {}", Tele::EscapedString { line });
+        Log::trace("GSM", "Test: {}", GSM::Command::CFUN { GSM::Command::CFUNType::DisableTxRxCircuits, true });
+        Log::trace("GSM", "Test: {}", GSM::Command::CFUN {});
     },
-};
+};*/
 
 static TransmitTask s_gsm_tx_task { huart2 };
 
-extern "C" void libtele_trace_task_switched_in() {
-    std::ignore = 0;
-}
+static GSM::TimerModule s_gsm_module_timer {};
+static GSM::LoggerModule s_gsm_module_logger {};
+static GSM::MainModule s_gsm_module_main {};
+static GSM::Coordinator s_gsm_coordinator { huart2, s_gsm_tx_task };
+
+extern "C" void libtele_trace_task_switched_in() { std::ignore = 0; }
 
 extern "C" void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart) { }
 
@@ -65,12 +48,19 @@ extern "C" void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t o
     }
 
     if (huart == &huart2) {
-        s_gsm_rx_task.isr_rx_event(last_offset, offset);
+        s_gsm_coordinator.isr_rx_event(last_offset, offset);
     } else if (huart == &huart3) {
-        s_gsm_rx_task.isr_rx_event(last_offset, offset);
+        // s_gsm_rx_task.isr_rx_event(last_offset, offset);
     }
 
     last_offset = offset;
+}
+
+extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart) {
+    if (huart == &huart2) {
+        HAL_UART_DMAStop(huart);
+        s_gsm_coordinator.begin_rx();
+    }
 }
 
 extern "C" void HAL_GPIO_EXTI_Callback(uint16_t pin) {
@@ -94,7 +84,7 @@ extern "C" void cpp_isr_cdc_receive(uint8_t* buf, uint32_t len) {
     Tele::isr_terminal_chars({ ptr, ptr + len });
 }
 
-static int stack_abuser(int i) {
+static int stack_abuser(int i) { // NOLINT(misc-no-recursion)
     if (i <= 1)
         return 1;
 
@@ -122,6 +112,15 @@ void terminal_line_callback(std::string_view line) {
         Log::info("Terminal", "HAL_GetTick(): {}", HAL_GetTick());
     } else if (line == "gettickhf") {
         Log::info("Terminal", "g_high_frequency_ticks: {}", g_high_frequency_ticks);
+    } else if (line == "gettimeofday") {
+        auto tp = std::chrono::system_clock::now();
+        date::sys_seconds sys_secs { std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch()) };
+
+        std::string str { 128, ' ' };
+        std::stringstream ss { str };
+        date::to_stream(ss, "%Y/%m/%d %H:%M:%S", sys_secs);
+
+        Log::info("Terminal", "Time: {}", ss.str());
     } else if (line == "tasks") {
         unsigned long rt;
         UBaseType_t num_tasks = uxTaskGetSystemState(data(s_task_status_buffer), uxTaskGetNumberOfTasks(), &rt);
@@ -196,12 +195,21 @@ static void float_thing() {
 */
 
 extern "C" void cpp_init() {
+    Tele::test_parse_ip();
+
     Tele::init_globals();
     Tele::init_tasks();
 
     s_gsm_tx_task.create("gsm tx");
-    s_gsm_rx_task.create("gsm rx");
-    s_gsm_rx_task.begin_rx();
+
+    s_gsm_coordinator.register_module(&s_gsm_module_timer);
+    s_gsm_coordinator.register_module(&s_gsm_module_logger);
+    s_gsm_coordinator.register_module(&s_gsm_module_main);
+
+    s_gsm_coordinator.create("gsm coordinator");
+    s_gsm_coordinator.begin_rx();
+
+    s_gsm_module_timer.create("gsm timer");
 
     /*struct xHeapStats heap_stats;
     vPortGetHeapStats(&heap_stats);

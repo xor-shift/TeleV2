@@ -64,7 +64,7 @@ void Error_Handler(void);
 #define HCF_WDT_STACK_OVERFLOW 7u
 #define HCF_ERROR_HANDLER 8u
 
-void halt_and_catch_fire(uint32_t, const char*);
+__attribute((noreturn)) void halt_and_catch_fire(uint32_t, const char*);
 void cpp_init();
 void cpp_os_exit();
 void cpp_assert_failed(const char* file, uint32_t line);

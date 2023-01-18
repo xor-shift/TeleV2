@@ -4,3 +4,9 @@
 [submodule "Thirdparty/P256-Cortex-M4"]
 	path = Thirdparty/P256-Cortex-M4
 	url = https://github.com/xor-shift/P256-Cortex-M4
+[submodule "Thirdparty/CTRE"]
+	path = Thirdparty/CTRE
+	url = https://github.com/hanickadot/compile-time-regular-expressions
+[submodule "Thirdparty/date"]
+	path = Thirdparty/date
+	url = https://github.com/HowardHinnant/date

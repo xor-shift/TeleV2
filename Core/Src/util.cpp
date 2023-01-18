@@ -1,5 +1,6 @@
 #include "util.hpp"
 
+#include <algorithm>
 #include <random>
 #include <utility>
 
@@ -53,33 +54,81 @@ P256::PrivateKey get_sk_from_config() {
     return sk;
 }
 
-struct BlinkTask : StaticTask<configMINIMAL_STACK_SIZE> {
-    constexpr BlinkTask(GPIO_TypeDef* port, uint16_t pin) noexcept
-        : m_port(port)
-        , m_pin(pin) { }
+static bool parse_ipv4_whole(std::span<uint8_t> out, std::string_view str) {
+    return false;
+}
 
-protected:
-    [[noreturn]] void operator()() override {
-        while (osDelay(1000), true)
-            HAL_GPIO_TogglePin(m_port, m_pin);
+static bool parse_ipv4_decimated(std::span<uint8_t> out, std::string_view str) {
+    std::array<std::string_view, 4> segments {{"", "", "", ""}};
+
+    for (std::string_view::size_type prev = 0; auto& segment : segments) {
+        std::string_view::size_type next = str.find('.', prev);
+
+        segment = str.substr(prev, next - prev);
+        prev = next + 1;
+
+        if (next == std::string_view::npos)
+            break;
     }
 
-private:
-    GPIO_TypeDef* m_port;
-    uint16_t m_pin;
-};
+    if (std::find(begin(segments), end(segments), "") != end(segments))
+        return false;
 
-[[gnu::section(".ccmram")]] static BlinkTask blink_tasks[4] {
-    { LD3_GPIO_Port, LD3_Pin },
-    { LD4_GPIO_Port, LD4_Pin },
-    { LD5_GPIO_Port, LD5_Pin },
-    { LD6_GPIO_Port, LD6_Pin },
-};
+    for (size_t i = 0; i < 4; i++) {
+        std::string_view segment_str = segments[i];
+        uint8_t segment;
 
-void start_led_tasks() {
-    for (auto& task : blink_tasks) {
-        task.create("blink task");
+        std::from_chars_result res;
+
+        if (segment_str.starts_with("0x")) {
+            res = std::from_chars(begin(segment_str) + 2, end(segment_str), segment, 16);
+        } else if (segment_str.starts_with("0")) {
+            res = std::from_chars(begin(segment_str), end(segment_str), segment, 8);
+        } else {
+            res = std::from_chars(begin(segment_str), end(segment_str), segment, 10);
+        }
+
+        if (res.ec != std::errc())
+            return false;
+
+        out[i] = segment;
     }
+
+    return true;
+}
+
+static bool parse_ipv4(std::span<uint8_t> out, std::string_view str) {
+    if (out.size() < 4)
+        return false;
+
+    if (str.contains('.')) [[likely]] {
+        return parse_ipv4_decimated(out, str);
+    }
+
+    return parse_ipv4_whole(out, str);
+}
+
+static bool parse_ipv6(std::span<uint8_t> out, std::string_view str) {
+    if (out.size() < 16)
+        return false;
+
+    //
+
+    return false;
+}
+
+bool parse_ip(std::string_view ip, bool& ipv4, std::span<uint8_t> out) {
+    if (parse_ipv4(out, ip)) {
+        ipv4 = true;
+        return true;
+    }
+
+    if (parse_ipv6(out, ip)) {
+        ipv4 = false;
+        return true;
+    }
+
+    return false;
 }
 
 }

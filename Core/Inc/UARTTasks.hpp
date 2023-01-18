@@ -5,11 +5,11 @@
 #include <string_view>
 
 #include <cmsis_os.h>
-#include <main.h>
-
-#include "util.hpp"
-#include <StaticTask.hpp>
 #include <stream_buffer.h>
+
+#include <main.h>
+#include <StaticTask.hpp>
+#include <util.hpp>
 
 template<typename Callback> struct ReceiveTask : Tele::StaticTask<1024> {
     constexpr ReceiveTask(UART_HandleTypeDef& huart, Callback&& cb = {}) noexcept
@@ -45,10 +45,12 @@ template<typename Callback> struct ReceiveTask : Tele::StaticTask<1024> {
 
 protected:
     [[noreturn]] void operator()() override {
+        std::array<char, 32> staging_bytes;
+
         for (;;) {
-            void* rx_buf_ptr = reinterpret_cast<void*>(m_staging_bytes.data());
-            size_t amt_read = xStreamBufferReceive(m_stream, rx_buf_ptr, m_staging_bytes.size(), portMAX_DELAY);
-            std::invoke(m_callback, std::string_view(m_staging_bytes.data(), amt_read));
+            void* rx_buf_ptr = reinterpret_cast<void*>(staging_bytes.data());
+            size_t amt_read = xStreamBufferReceive(m_stream, rx_buf_ptr, staging_bytes.size(), portMAX_DELAY);
+            std::invoke(m_callback, std::string_view(staging_bytes.data(), amt_read));
         }
     }
 
@@ -57,8 +59,6 @@ private:
     Callback m_callback;
 
     std::array<uint8_t, 64> m_uart_rx_buffer;
-
-    std::array<char, 32> m_staging_bytes;
 
     std::array<uint8_t, 32> m_buffer_storage;
     StaticStreamBuffer_t m_buffer;
@@ -113,9 +113,9 @@ protected:
 private:
     UART_HandleTypeDef& m_huart;
 
-    std::array<uint8_t, 32> m_uart_buffer;
+    std::array<uint8_t, 64> m_uart_buffer;
 
-    std::array<uint8_t, 32> m_buffer_storage;
+    std::array<uint8_t, 64> m_buffer_storage;
     StaticStreamBuffer_t m_buffer;
     StreamBufferHandle_t m_stream;
 };

@@ -71,9 +71,11 @@ add_subdirectory(Thirdparty/LibStuff)
 
 add_subdirectory(Thirdparty/P256-Cortex-M4)
 add_subdirectory(Thirdparty/fmt)
+add_subdirectory(Thirdparty/CTRE)
+add_subdirectory(Thirdparty/date)
 
 add_executable(${PROJECT_NAME}.elf ${SOURCES} ${LINKER_SCRIPT})
-target_link_libraries(${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt)
+target_link_libraries(${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt ctre date::date)
 
 target_include_directories(${PROJECT_NAME}.elf PRIVATE Core)
 

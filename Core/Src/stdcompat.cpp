@@ -10,16 +10,14 @@
 #include "main.h"
 
 extern "C" {
-
 extern RNG_HandleTypeDef hrng;
 }
 
-static std::atomic<int32_t> timestamp_base = 0;
+static std::atomic_int32_t timestamp_base = 0;
 
 namespace Tele {
 
 void set_time(int32_t timestamp) {
-    static_assert(std::is_same_v<long, int32_t>);
     timestamp_base = timestamp;
 }
 
@@ -51,21 +49,94 @@ extern "C" void getentropy(void* buffer, size_t length) {
     std::copy(excess_vp, excess_vp + excess_bytes, reinterpret_cast<uint8_t*>(buffer) + length - excess_bytes);
 }
 
-static uint8_t s_pre_kernel_bump_arena[256];
-static std::atomic<uint32_t> s_bump_ptr = 0;
+struct FreeRTOSAllocator {
+    [[nodiscard]] void* allocate(size_t sz) { // NOLINT(readability-convert-member-functions-to-static)
+        return pvPortMalloc(sz);
+    }
+
+    void deallocate(void* ptr, size_t) { // NOLINT(readability-convert-member-functions-to-static)
+        return vPortFree(ptr);
+    }
+};
+
+template<size_t ArenaSize = 256> struct AtomicArenaAllocator {
+    inline static constexpr size_t arena_size = ArenaSize;
+    [[nodiscard]] void* allocate(size_t sz) {
+        size_t excess = sz % alignof(std::max_align_t);
+        sz += excess;
+
+        uint32_t offset = m_arena_ptr += sz;
+        offset -= sz;
+
+        void* ret = m_arena + offset;
+
+        if (offset + sz >= arena_size)
+            ret = nullptr;
+
+        if (ret == nullptr) {
+            halt_and_catch_fire(HCF_RTOS_MALLOC, "ISR mallocator failed");
+        }
+
+        return ret;
+    }
+
+    void deallocate(void*, size_t) { // NOLINT(readability-convert-member-functions-to-static)
+        //
+    }
+
+    bool ptr_in_arena(const void* ptr) const {
+        const char* arena_begin = m_arena;
+        const char* arena_end = m_arena + arena_size;
+        const char* arg = reinterpret_cast<const char*>(ptr);
+
+        return arena_end > arg && arg >= arena_begin;
+    }
+
+private:
+    std::atomic_uint32_t m_arena_ptr = 0;
+    alignas(std::max_align_t) char m_arena[arena_size];
+};
+
+struct MixedRTOSAllocator {
+    [[nodiscard]] void* allocate(size_t sz) {
+        bool call_rtos_allocator = true;
+        // call_rtos_allocator &= xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED;
+        call_rtos_allocator &= xPortIsInsideInterrupt() == pdFALSE;
+
+        if (call_rtos_allocator) {
+            return m_allocator.allocate(sz);
+        }
+
+        m_isr_allocations++;
+        return m_isr_allocator.allocate(sz);
+    }
+
+    void deallocate(void* ptr, size_t) {
+        if (m_isr_allocator.ptr_in_arena(ptr))
+            return;
+
+        return vPortFree(ptr);
+    }
+
+    uint32_t isr_alloc_count() const { return m_isr_allocations.load(); }
+
+private:
+    std::atomic_uint32_t m_isr_allocations = 0;
+    AtomicArenaAllocator<> m_isr_allocator {};
+
+    FreeRTOSAllocator m_allocator {};
+};
+
+[[gnu::section(".ccmram")]] uint8_t ucHeap[ configTOTAL_HEAP_SIZE ];
+
+MixedRTOSAllocator s_allocator {};
+
+extern "C" void vApplicationMallocFailedHook();
 
 extern "C" void* malloc(size_t sz) {
-    /*if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
-        uint32_t ptr = (s_bump_ptr += sz) - sz;
-        return s_pre_kernel_bump_arena + ptr;
-    }*/
+    void* ret = s_allocator.allocate(sz);
 
-    return pvPortMalloc(sz);
+    return ret;
 }
 
-extern "C" void free(void* ptr) {
-    if (s_pre_kernel_bump_arena <= ptr && ptr <= s_pre_kernel_bump_arena + 256)
-        return;
-
-    return vPortFree(ptr);
-}
+extern "C" void free(void* ptr) { return s_allocator.deallocate(ptr, 0); }

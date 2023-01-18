@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cmsis_os.h"
+#include <cmsis_os.h>
 
 namespace Tele {
 

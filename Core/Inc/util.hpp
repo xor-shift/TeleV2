@@ -3,14 +3,16 @@
 #include <algorithm>
 #include <charconv>
 #include <functional>
+#include <optional>
 #include <string_view>
 
 #include <fmt/core.h>
 
+#include <Stuff/Maths/Bit.hpp>
+#include <Stuff/Util/Hacks/Try.hpp>
+
 #include <cmsis_os.h>
 #include <p256.hpp>
-
-#include <Stuff/Maths/Bit.hpp>
 
 #define CCMstatic [[gnu::section(".ccmram")]] static
 
@@ -177,8 +179,7 @@ template<typename T> [[gnu::always_inline]] inline void do_not_optimize(T&& valu
 #endif
 }
 
-template<typename T, typename Fn>
-constexpr size_t in_chunks(std::span<T> span, size_t chunk_sz, Fn&& fn) {
+template<typename T, typename Fn> constexpr size_t in_chunks(std::span<T> span, size_t chunk_sz, Fn&& fn) {
     if (chunk_sz == 0)
         return 0;
 
@@ -193,11 +194,106 @@ constexpr size_t in_chunks(std::span<T> span, size_t chunk_sz, Fn&& fn) {
     return executions;
 }
 
+template<typename Callback> struct DelimitedReader {
+    constexpr DelimitedReader(Callback const& callback, std::span<char> buffer, std::string_view delimiter)
+        : m_callback(callback)
+        , m_buffer(buffer)
+        , m_delimiter(delimiter) { }
+
+    constexpr void add_char(char c) {
+        if (add_char_impl(c)) {
+            try_finish();
+            return;
+        }
+
+        if (try_finish()) {
+            return add_char(c);
+        }
+
+        // what
+    }
+
+    constexpr void add_chars(std::string_view chars) {
+        for (char c : chars) {
+            add_char(c);
+        }
+    }
+
+private:
+    Callback m_callback;
+    std::span<char> m_buffer;
+    std::string_view m_delimiter;
+
+    bool m_overflown = false;
+    size_t m_delimiter_match_sz = 0;
+    size_t m_buffer_usage = 0;
+
+    constexpr bool ready() const { return m_delimiter_match_sz == m_delimiter.size(); }
+
+    constexpr bool try_finish() {
+        if (!ready())
+            return false;
+
+        std::invoke(m_callback, std::string_view(data(m_buffer), m_buffer_usage), m_overflown);
+
+        m_overflown = false;
+        m_delimiter_match_sz = 0;
+        m_buffer_usage = 0;
+        return true;
+    }
+
+    // returns true if a char was added
+    // if false and ready(), the character should be retried after the callback is called
+    // if false and not ready(), there's an overflow, m_overflown will be updated accordingly
+    constexpr bool add_char_impl(char c) {
+        // TODO: We can use memcpy etc. if we know that there's no delimiter. Check to see if that is more performant.
+
+        if (ready()) [[unlikely]] /* ready() should be checked */
+            return false;
+
+        if (m_delimiter[m_delimiter_match_sz] == c) {
+            ++m_delimiter_match_sz;
+            return true;
+        }
+
+        if (m_buffer_usage >= m_buffer.size()) {
+            m_overflown = true;
+            return false;
+        }
+
+        m_buffer[m_buffer_usage++] = c;
+
+        return true;
+    }
+};
+
 P256::PrivateKey get_sk_from_config();
 
-void start_led_tasks();
-
 std::span<TaskStatus_t> get_tasks(std::span<TaskStatus_t> storage);
+
+bool parse_ip(std::string_view ip, bool& ipv4, std::span<uint8_t> out);
+
+template<std::integral T> static tl::expected<T, std::errc> from_chars(std::string_view str, int base = 10) {
+    T v;
+
+    std::from_chars_result res = std::from_chars(begin(str), end(str), v, base);
+    if (res.ec != std::errc())
+        return tl::unexpected { res.ec };
+
+    return v;
+}
+
+template<std::floating_point T>
+static tl::expected<T, std::errc>
+from_chars(std::string_view str, std::chars_format format = std::chars_format::general) {
+    T v;
+
+    std::from_chars_result res = std::from_chars(begin(str), end(str), v, format);
+    if (res.ec != std::errc())
+        return tl::unexpected { res.ec };
+
+    return v;
+}
 
 }
 
