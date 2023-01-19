@@ -4,12 +4,10 @@
 [submodule "Thirdparty/P256-Cortex-M4"]
 	path = Thirdparty/P256-Cortex-M4
 	url = https://github.com/xor-shift/P256-Cortex-M4
-[submodule "Thirdparty/CTRE"]
-	path = Thirdparty/CTRE
-	url = https://github.com/hanickadot/compile-time-regular-expressions
-[submodule "Thirdparty/date"]
-	path = Thirdparty/date
-	url = https://github.com/HowardHinnant/date
 [submodule "Thirdparty/scnlib"]
 	path = Thirdparty/scnlib
-	url = https://github.com/eliaskosunen/scnlib
+	url = https://github.com/cjvaughter/scnlib/
+	branch = sandbox
+[submodule "Thirdparty/FreeRTOS-POSIX"]
+	path = Thirdparty/FreeRTOS-POSIX
+	url = https://github.com/FreeRTOS/Lab-Project-FreeRTOS-POSIX

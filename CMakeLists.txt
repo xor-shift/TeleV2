@@ -63,19 +63,30 @@ add_link_options(-Wl,-gc-sections,--print-memory-usage,-Map=${PROJECT_BINARY_DIR
 add_link_options(-mcpu=cortex-m4 -mthumb -mthumb-interwork)
 add_link_options(-T ${LINKER_SCRIPT})
 
-set(LibStuffUseFMT ON)
-set(LibStuffCompileTests OFF)
-set(LibStuffCompileBenchmarks OFF)
-set(LibStuffCompileExamples OFF)
-add_subdirectory(Thirdparty/LibStuff)
+option(LibStuffUseFMT ON)
+option(LibStuffCompileTests OFF)
+option(LibStuffCompileBenchmarks OFF)
+option(LibStuffCompileExamples OFF)
+option(SCN_USE_RTTI OFF)
+option(SCN_USE_EXCEPTIONS OFF)
+option(SCN_TYPE_DOUBLE OFF)
+option(SCN_USE_STATIC_LOCALE ON)
+option(SCN_TYPE_LONG_DOUBLE OFF)
+option(SCN_TYPE_BUFFER OFF)
+option(SCN_TYPE_CUSTOM OFF)
+option(SCN_USE_CSTD OFF)
 
+add_subdirectory(Thirdparty/LibStuff)
 add_subdirectory(Thirdparty/P256-Cortex-M4)
 add_subdirectory(Thirdparty/fmt)
-add_subdirectory(Thirdparty/CTRE)
-add_subdirectory(Thirdparty/date)
+add_subdirectory(Thirdparty/scnlib)
+
+target_compile_options(fmt PRIVATE -Os)
+target_compile_options(scn PRIVATE -Os)
+target_compile_options(libstuff PRIVATE -Os)
 
 add_executable(${PROJECT_NAME}.elf ${SOURCES} ${LINKER_SCRIPT})
-target_link_libraries(${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt ctre date::date)
+target_link_libraries(${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt scn::scn)
 
 target_include_directories(${PROJECT_NAME}.elf PRIVATE Core)
 

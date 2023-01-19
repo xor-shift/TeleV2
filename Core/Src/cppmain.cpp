@@ -6,7 +6,7 @@
 #include <charconv>
 #include <chrono>
 
-#include <date/date.h>
+#include <fmt/chrono.h>
 
 #include <CircularBuffer.hpp>
 #include <Globals.hpp>
@@ -114,13 +114,7 @@ void terminal_line_callback(std::string_view line) {
         Log::info("Terminal", "g_high_frequency_ticks: {}", g_high_frequency_ticks);
     } else if (line == "gettimeofday") {
         auto tp = std::chrono::system_clock::now();
-        date::sys_seconds sys_secs { std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch()) };
-
-        std::string str { 128, ' ' };
-        std::stringstream ss { str };
-        date::to_stream(ss, "%Y/%m/%d %H:%M:%S", sys_secs);
-
-        Log::info("Terminal", "Time: {}", ss.str());
+        Log::info("Terminal", "Time: {}", tp);
     } else if (line == "tasks") {
         unsigned long rt;
         UBaseType_t num_tasks = uxTaskGetSystemState(data(s_task_status_buffer), uxTaskGetNumberOfTasks(), &rt);
@@ -194,7 +188,13 @@ static void float_thing() {
 }
 */
 
+void terminate_handler() {
+    Error_Handler();
+}
+
 extern "C" void cpp_init() {
+    std::set_terminate(terminate_handler);
+
     Tele::test_parse_ip();
 
     Tele::init_globals();

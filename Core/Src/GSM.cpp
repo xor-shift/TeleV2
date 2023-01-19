@@ -1,9 +1,9 @@
 #include <GSM.hpp>
 
-#include <ctime>
+#include <chrono>
 
-#include <ctre.hpp>
-#include <date/date.h>
+#include <scn/scn.h>
+#include <scn/tuple_return.h>
 
 #include <Stuff/Util/Visitor.hpp>
 
@@ -62,7 +62,71 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
         }
     }
 
-    if (auto res = ctre::match<"^\\+HTTPACTION: ([012]),([0-9]{3}),([0-9]+)\"">(line); res) {
+    if (auto [res, cid, status, address] = scn::scan_tuple<char, char, std::string>(line, "+SAPBR: {},{},{}"); res) {
+        BearerParameters reply {
+            .ipv4 = true,
+            .ip_address = { { 1, 2, 3, 4 } },
+        };
+
+        switch (cid) {
+        case '1': reply.profile = BearerProfile::Profile0; break;
+        case '2': reply.profile = BearerProfile::Profile1; break;
+        case '3': reply.profile = BearerProfile::Profile2; break;
+        default: return tl::unexpected { "bad bearer profile" };
+        }
+
+        switch (status) {
+        case '0': reply.status = BearerStatus::Connecting; break;
+        case '1': reply.status = BearerStatus::Connected; break;
+        case '2': reply.status = BearerStatus::Closing; break;
+        case '3': reply.status = BearerStatus::Closed; break;
+        default: return tl::unexpected { "bad bearer status" };
+        }
+
+        return reply;
+    }
+
+    if (auto [res, code, longitude, latitude, year, month, day, hour, minute, second]
+        = scn::scan_tuple<int, float, float, int32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>(
+          line, "+CIPGSMLOC: {},{},{},{}/{}/{},{}:{}:{}"
+        );
+        res) {
+        using days = std::chrono::duration<int, std::ratio_multiply<std::ratio<24>, std::chrono::hours::period>>;
+        using weeks = std::chrono::duration<int, std::ratio_multiply<std::ratio<7>, days::period>>;
+        using years = std::chrono::duration<int, std::ratio_multiply<std::ratio<146097, 400>, days::period>>;
+        using months = std::chrono::duration<int, std::ratio_divide<years::period, std::ratio<12>>>;
+
+        // https://github.com/HowardHinnant/date/blob/22ceabf205d8d678710a43154da5a06b701c5830/include/date/date.h#L2973
+        auto ymd_to_days = [](uint16_t y_, uint8_t m_, uint8_t d_) -> days {
+            auto const y = static_cast<int32_t>(y_) - (m_ <= 2); // 2 -> February
+            auto const m = static_cast<uint32_t>(m_);
+            auto const d = static_cast<uint32_t>(d_);
+            auto const era = (y >= 0 ? y : y - 399) / 400;
+            auto const yoe = static_cast<uint32_t>(y - era * 400);            // [0, 399]
+            auto const doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1; // [0, 365]
+            auto const doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;           // [0, 146096]
+            return days { era * 146097 + static_cast<int32_t>(doe) - 719468 };
+        };
+
+        std::chrono::time_point<std::chrono::system_clock, days> sys_days { ymd_to_days(year, month, day) };
+        std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds> sys_seconds { sys_days };
+        int32_t unix_time = static_cast<int32_t>(sys_seconds.time_since_epoch().count());
+        unix_time += hour * 3600;
+        unix_time += minute * 60;
+        unix_time += second;
+
+        Tele::set_time(unix_time);
+
+        return PositionAndTime {
+            .status_code = code,
+            .unix_time = unix_time,
+            .longitude = longitude,
+            .latitude = latitude,
+        };
+    }
+
+    /*
+    if (auto res = ctre::match<"^\\+HTTPACTION: ([012]),([0-9]{3}),([0-9]+)">(line); res) {
         //"+HTTPACTION: 0,200,38"
 
         auto [whole, method_str, code_str, length_str] = res;
@@ -89,64 +153,7 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
     if (auto res = ctre::match<"^\\+SAPBR ([123]): DEACT">(line); res) {
         //
     }
-
-    if (auto res = ctre::match<"\\+SAPBR: ([123]),([0123]),\"([^\"]+)\"">(line); res) {
-        auto [match, cid, status, address] = res;
-
-        BearerParameters reply {
-            .ipv4 = true,
-            .ip_address = { { 1, 2, 3, 4 } },
-        };
-
-        switch (cid.to_view()[0]) {
-        case '1': reply.profile = BearerProfile::Profile0; break;
-        case '2': reply.profile = BearerProfile::Profile1; break;
-        case '3': reply.profile = BearerProfile::Profile2; break;
-        default: return tl::unexpected { "bad bearer profile" };
-        }
-
-        switch (status.to_view()[0]) {
-        case '0': reply.status = BearerStatus::Connecting; break;
-        case '1': reply.status = BearerStatus::Connected; break;
-        case '2': reply.status = BearerStatus::Closing; break;
-        case '3': reply.status = BearerStatus::Closed; break;
-        default: return tl::unexpected { "bad bearer status" };
-        }
-
-        return reply;
-    }
-
-    static constexpr ctll::fixed_string gsm_loc_str
-      = "\\+CIPGSMLOC: ([0-9]+),([^,]+),([^,]+),([0-9]{4})/([0-9]{2})/([0-9]{2}),([0-9]{2}):([0-9]{2}):([0-9]{2})";
-    if (auto res = ctre::match<gsm_loc_str>(line); res) {
-        auto [whole, code_str, longitude_str, latitude_str, yyyy_str, mm_str, dd_str, hr_str, min_str, sec_str] = res;
-
-        TRY_PARSE(int, code, code_str);
-        TRY_PARSE(float, longitude, longitude_str);
-        TRY_PARSE(float, latitude, latitude_str);
-        TRY_PARSE(int, year, yyyy_str);
-        TRY_PARSE(unsigned long, month, mm_str);
-        TRY_PARSE(unsigned long, day, dd_str);
-        TRY_PARSE(int32_t, hour, hr_str);
-        TRY_PARSE(int32_t, minute, min_str);
-        TRY_PARSE(int32_t, second, sec_str);
-
-        date::sys_days sys_days { date::year { year } / date::month { month } / date::day { day } };
-        date::sys_seconds sys_seconds { sys_days };
-        int32_t unix_time = static_cast<int32_t>(sys_seconds.time_since_epoch().count());
-        unix_time += hour * 3600;
-        unix_time += minute * 60;
-        unix_time += second;
-
-        Tele::set_time(unix_time);
-
-        return PositionAndTime {
-            .status_code = code,
-            .unix_time = unix_time,
-            .longitude = longitude,
-            .latitude = latitude,
-        };
-    }
+     */
 
     return tl::unexpected { "line did not match any known replies" };
 
@@ -199,14 +206,20 @@ void MainModule::reset_state() {
 
     m_requested_bearer = false;
     m_requested_gprs = false;
+    m_requested_http = false;
+    m_requested_reset = false;
 }
 
 void MainModule::periodic_callback() {
     auto bail = [this] {
-        m_coordinator->send_command_now(Command::CFUN {
-          .fun_type = CFUNType::Full,
-          .reset_before = true,
-        });
+        m_coordinator->send_command(
+          this,
+          Command::CFUN {
+            .fun_type = CFUNType::Full,
+            .reset_before = true,
+          },
+          false
+        );
         m_timer = 0;
         reset_state();
     };
@@ -232,26 +245,42 @@ void MainModule::periodic_callback() {
         if (!m_requested_bearer) {
             m_requested_bearer = true;
 
-            m_coordinator->send_command_now(Command::SetBearerParameter {
-              .profile = BearerProfile::Profile0,
-              .tag = "Contype",
-              .value = "GPRS",
-            });
+            m_coordinator->send_command(
+              this,
+              Command::SetBearerParameter {
+                .profile = BearerProfile::Profile0,
+                .tag = "Contype",
+                .value = "GPRS",
+              },
+              false
+            );
 
-            m_coordinator->send_command_now(Command::SetBearerParameter {
-              .profile = BearerProfile::Profile0,
-              .tag = "APN",
-              .value = "internet",
-            });
+            m_coordinator->send_command(
+              this,
+              Command::SetBearerParameter {
+                .profile = BearerProfile::Profile0,
+                .tag = "APN",
+                .value = "internet",
+              },
+              false
+            );
 
-            m_coordinator->send_command_now(Command::OpenBearer {
-              .profile = BearerProfile::Profile0,
-            });
+            m_coordinator->send_command(
+              this,
+              Command::OpenBearer {
+                .profile = BearerProfile::Profile0,
+              },
+              false
+            );
         }
 
-        m_coordinator->send_command_now(Command::QueryBearerParameters {
-          .profile = BearerProfile::Profile0,
-        });
+        m_coordinator->send_command(
+          this,
+          Command::QueryBearerParameters {
+            .profile = BearerProfile::Profile0,
+          },
+          false
+        );
 
         return;
     }
@@ -260,142 +289,45 @@ void MainModule::periodic_callback() {
         if (!m_requested_gprs) {
             m_requested_gprs = true;
 
-            m_coordinator->send_command_now(Command::AttachToGPRS {});
+            m_coordinator->send_command(this, Command::AttachToGPRS {}, false);
         }
 
-        m_coordinator->send_command_now(Command::QueryGPRS {});
+        m_coordinator->send_command(this, Command::QueryGPRS {}, false);
         return;
     }
 
     if (!m_requested_http) {
         m_requested_http = true;
-        m_coordinator->send_command_now(Command::HTTPInit {});
-        m_coordinator->send_command_now(Command::HTTPSetBearer { .profile = BearerProfile::Profile0 });
-        m_coordinator->send_command_now(Command::HTTPSetUA { .user_agent = "https://github.com/xor-shift/TeleV2" });
+        m_coordinator->send_command(this, Command::HTTPInit {}, false);
+        m_coordinator->send_command(this, Command::HTTPSetBearer { .profile = BearerProfile::Profile0 }, false);
+        m_coordinator->send_command(
+          this, Command::HTTPSetUA { .user_agent = "https://github.com/xor-shift/TeleV2" }, false
+        );
         return;
     }
 
     if (!m_requested_reset) {
         m_requested_reset = true;
-        m_coordinator->send_command_now(Command::HTTPSetURL { .url = Tele::Config::Endpoints::reset_request });
-        m_coordinator->send_command_now(Command::HTTPMakeRequest { .request_type = HTTPRequestType::GET });
+        m_coordinator->send_command(this, Command::HTTPSetURL { .url = Tele::Config::Endpoints::reset_request }, false);
+        m_coordinator->send_command(this, Command::HTTPMakeRequest { .request_type = HTTPRequestType::GET }, false);
         return;
     }
 
     // all's well, periodically check sanity (and location (and time))
 
     switch (m_timer % 10) { // 5 second timeslots
-    case 0: m_coordinator->send_command_now(Command::QueryGPRS {}); break;
-    case 5: m_coordinator->send_command_now(Command::QueryBearerParameters { BearerProfile::Profile0 }); break;
+    case 0: m_coordinator->send_command(this, Command::QueryGPRS {}, false); break;
+    case 5: m_coordinator->send_command(this, Command::QueryBearerParameters { BearerProfile::Profile0 }, false); break;
     default: break;
     }
 
     switch (m_timer % 60) { // 30 seconds timeslots
-    case 51: m_coordinator->send_command_now(Command::QueryPositionAndTime {}); break;
+    case 51: m_coordinator->send_command(this, Command::QueryPositionAndTime {}, false); break;
     default: break;
     }
 }
 
 void MainModule::incoming_reply(GSM::Coordinator&, Reply::reply_type const& reply) {
-    /*auto bail = [this] {
-        m_coordinator->send_command_now(Command::CFUN {
-          .fun_type = CFUNType::Full,
-          .reset_before = true,
-        });
-        m_timer = 0;
-        m_connection_stage = ConnectionStage::NoSIM;
-    };
-
-    Stf::MultiVisitor visitor {
-        [this, &bail](Reply::PeriodicMessage const& reply) { //
-            m_timer += reply.time;
-
-            switch (m_connection_stage) {
-            case ConnectionStage::NoSIM:
-                if (m_timer >= 8000) {
-                    bail();
-                }
-                break;
-            case ConnectionStage::HaveSIM:
-                if (m_timer >= 2000) {
-                    m_coordinator->send_command_now(Command::SetBearerParameter {
-                      .profile = BearerProfile::Profile0,
-                      .tag = "Contype",
-                      .value = "GPRS",
-                    });
-
-                    m_timer = 0;
-                    m_connection_stage = ConnectionStage::SetBearerSent;
-                }
-                break;
-            case ConnectionStage::SetBearerSent:
-                if (m_timer == 1000) {
-                    m_coordinator->send_command_now(Command::QueryBearerParameters {
-                      .profile = BearerProfile::Profile0,
-                    });
-                } else if (m_timer >= 4000) {
-                    bail();
-                }
-                break;
-            case ConnectionStage::BearerSet:
-                if (m_timer == 10000) {
-                    m_coordinator->send_command_now(Command::OpenBearer {
-                      .profile = BearerProfile::Profile0,
-                    });
-
-                    m_timer = 0;
-                    m_connection_stage = ConnectionStage::OpenBearerSent;
-                } else if (m_timer >= 14000) {
-                    bail();
-                }
-                break;
-            case ConnectionStage::OpenBearerSent:
-                if (m_timer == 1000) {
-                    m_coordinator->send_command_now(Command::QueryBearerParameters {
-                      .profile = BearerProfile::Profile0,
-                    });
-                } else if (m_timer >= 4000) {
-                    bail();
-                }
-                break;
-            case ConnectionStage::BearerOpen:
-                if (m_timer == 1000) {
-                    m_coordinator->send_command_now(Command::AttachToGPRS {});
-
-                    m_timer = 0;
-                    m_connection_stage = ConnectionStage::OpenGPRSSent;
-                }
-                break;
-            case ConnectionStage::OpenGPRSSent:
-                / *if (m_timer == 1000) {
-                    m_coordinator->send_command_now(Command::GPRSAttachmentQuery {});
-
-                    m_timer = 0;
-                    m_connection_stage = ConnectionStage::OpenGPRSSent;
-                } else if (m_timer >= 4000) {
-                    bail();
-                }* /
-                break;
-            case ConnectionStage::GPRSOpen: break;
-            }
-        },
-        [](Reply::CFUN) { / * TODO: check if cfun is 1, otherwise bail * / },
-        [this](Reply::CPIN) {
-            m_connection_stage = ConnectionStage::HaveSIM;
-            m_timer = 0;
-        },
-        [this](Reply::BearerParameters const& reply) {
-            m_timer = 0;
-
-            if (reply.status == BearerStatus::Closed) {
-                m_connection_stage = ConnectionStage::BearerSet;
-            } else if (reply.status == BearerStatus::Connected) {
-                m_connection_stage = ConnectionStage::BearerOpen;
-            }
-        },
-        [](auto) {},
-    };*/
-
     Stf::MultiVisitor visitor {
         [this](Reply::PeriodicMessage const& message) { periodic_callback(); },
         [this](Reply::Ready const&) { m_ready = true; },
@@ -404,6 +336,7 @@ void MainModule::incoming_reply(GSM::Coordinator&, Reply::reply_type const& repl
         [this](Reply::SMSReady const&) { m_sms_ready = true; },
         [this](Reply::CallReady const&) { m_call_ready = true; },
         [this](Reply::GPRSStatus const& reply) { m_gprs_open = reply.attached; },
+        [this](Reply::PositionAndTime const& reply) { Tele::set_time(reply.unix_time); },
         [this](Reply::BearerParameters const& reply) {
             if (reply.profile != BearerProfile::Profile0) {
                 return;
@@ -416,7 +349,9 @@ void MainModule::incoming_reply(GSM::Coordinator&, Reply::reply_type const& repl
                 m_gprs_open = false;
             }
         },
-        [this](Reply::HTTPResponseReady const& reply) { m_coordinator->send_command_now(Command::HTTPRead{}); },
+        [this](Reply::HTTPResponseReady const& reply) {
+            m_coordinator->send_command(this, Command::HTTPRead {}, false);
+        },
         [](auto) {},
     };
 
@@ -524,13 +459,68 @@ void Coordinator::forge_reply(Module* who, Reply::reply_type&& reply) {
     }
 }
 
+void Coordinator::fullfill_command(CommandElement&& cmd, std::span<Reply::reply_type> replies) {
+
+}
+
 void Coordinator::operator()() {
     queue_elem_type elem = CommandElement {};
-    CommandElement last_command {};
+
+    std::vector<Reply::reply_type> reply_buffer;
+    std::optional<CommandElement> active_command = std::nullopt;
+
+    auto new_reply = [&](Reply::reply_type&& reply) {
+        bool solicited = std::visit(
+          [&active_command]<typename T>(T const&) {
+              if constexpr (std::is_same_v<typename T::solicit_type, solicit_type_never>)
+                  return false;
+              else if constexpr (std::is_same_v<typename T::solicit_type, solicit_type_always>)
+                  return true;
+              else
+                  return active_command.has_value()
+                      && std::holds_alternative<typename T::solicit_type>(active_command->command);
+          },
+          reply
+        );
+
+        if (!solicited) {
+            std::visit(
+              []<typename T>(T const&) {
+                  Log::debug(
+                    "GSM Reply Buffer", "unsolicited reply of type \"{}\" was not pushed to the buffer", T::name
+                  );
+              },
+              reply
+            );
+            return;
+        }
+        bool finish_buffer = std::holds_alternative<Reply::Okay>(reply);
+
+        reply_buffer.emplace_back(std::move(reply));
+
+        if (!finish_buffer)
+            return;
+
+        Log::debug("GSM Reply Buffer", "OK reply, finishing buffer with size {}", reply_buffer.size());
+
+        if (!active_command) {
+            Log::debug("GSM Reply Buffer", "active_command does not have a value!");
+            return;
+        }
+
+        Log::debug(
+          "GSM Reply Buffer", "the module that requested the command was situated at {}",
+          reinterpret_cast<void*>(active_command->who)
+        );
+
+        fullfill_command(std::move(*active_command), reply_buffer);
+        active_command = std::nullopt;
+        reply_buffer.clear();
+    };
 
     Tele::DelimitedReader line_reader {
-        [this](std::string_view line, bool overflown) {
-            // Log::trace("GSM Coordinator", "Received line: {}", Tele::EscapedString { line });
+        [&](std::string_view line, bool overflown) {
+            Log::trace("GSM Coordinator", "Received line: {}", Tele::EscapedString { line });
             if (overflown) {
                 Log::warn("GSM Coordinator", "Last line was cut short due to an overflow");
             }
@@ -546,11 +536,11 @@ void Coordinator::operator()() {
                 return;
             }
 
-            Reply::reply_type const& reply = *res;
+            new_reply(std::move(*res));
 
-            for (Module* module : m_registered_modules) {
+            /*for (Module* module : m_registered_modules) {
                 module->incoming_reply(*this, reply);
-            }
+            }*/
         },
         std::span(m_line_buffer),
         "\r\n",
@@ -567,7 +557,17 @@ void Coordinator::operator()() {
         if (xQueueReceive(m_queue_handle, &elem, portMAX_DELAY) != pdTRUE)
             Error_Handler();
 
-        visit(visitor, elem);
+        if (std::holds_alternative<DataElement>(elem)) {
+            DataElement const& data = std::get<DataElement>(elem);
+
+            line_reader.add_chars({ std::data(data.data), std::data(data.data) + data.sz });
+        } else if (std::holds_alternative<CommandElement>(elem)) {
+            CommandElement const& command = std::get<CommandElement>(elem);
+
+            active_command = command;
+        }
+
+        // visit(visitor, elem);
     }
 }
 
