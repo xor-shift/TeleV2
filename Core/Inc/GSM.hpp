@@ -8,6 +8,7 @@
 
 #include <cmsis_os.h>
 #include <queue.h>
+#include <semphr.h>
 
 #include <GSMCommands.hpp>
 #include <UARTTasks.hpp>
@@ -54,50 +55,50 @@ struct LoggerModule final : Module {
     void incoming_reply(Coordinator& coordinator, Reply::reply_type const& reply) final override;
 };
 
-struct MainModule : Module {
+struct MainModule
+    : Module
+    , Tele::StaticTask<4096> {
     virtual ~MainModule() override = default;
 
     void incoming_reply(Coordinator& coordinator, Reply::reply_type const& reply) final override;
 
+protected:
+    [[noreturn]] void operator()() final override;
+
 private:
-    uint32_t m_timer = 0;
+    volatile bool m_ready = false;
+    volatile bool m_functional = false;
+    volatile bool m_have_sim = false;
+    volatile bool m_call_ready = false;
+    volatile bool m_sms_ready = false;
+    volatile bool m_bearer_open = false;
+    volatile bool m_gprs_open = false;
 
-    bool m_ready = false;
-    bool m_functional = false;
-    bool m_have_sim = false;
-    bool m_call_ready = false;
-    bool m_sms_ready = false;
+    std::optional<Reply::HTTPResponseReady> m_last_http_response {};
 
-    bool m_bearer_open = false;
-    bool m_gprs_open = false;
+    bool initialize();
+    int main();
 
-    bool m_requested_bearer = false;
-    bool m_requested_gprs = false;
-    bool m_requested_http = false;
-    bool m_requested_reset = false;
+    std::optional<std::vector<Reply::reply_type>> http_request(
+      std::string_view url, HTTPRequestType method, std::string_view content_type = "", std::string_view content = ""
+    );
 
-    void periodic_callback();
-
-    void reset_state();
-
-    /*enum class ConnectionStage {
-        NoSIM = 0,
-        HaveSIM,
-        SetBearerSent,
-        BearerSet,
-        OpenBearerSent,
-        BearerOpen,
-        OpenGPRSSent,
-        GPRSOpen,
-    } m_connection_stage = ConnectionStage::NoSIM;*/
+    std::optional<Reply::HTTPResponseReady> wait_for_http(BaseType_t timeout_decisecs = 150);
 };
+
+struct CoordinatorQueueHelper;
 
 struct Coordinator : Tele::StaticTask<8192> {
     static constexpr size_t k_queue_size = 32;
+    friend struct CoordinatorQueueHelper;
 
     struct CommandElement {
         uint32_t order = 0;
         Module* who = nullptr;
+
+        std::vector<Reply::reply_type>* reply_container = nullptr;
+        SemaphoreHandle_t sema = nullptr;
+
         Command::command_type command = Command::AT {};
     };
 
@@ -129,6 +130,8 @@ struct Coordinator : Tele::StaticTask<8192> {
 
     uint32_t send_command(Module* who, Command::command_type&& command, bool in_isr);
 
+    std::vector<Reply::reply_type> send_command_async(Module* who, Command::command_type&& command);
+
     // do NOT call from ISRs
     void send_command_now(Command::command_type const& command);
 
@@ -154,5 +157,50 @@ private:
 
     void fullfill_command(CommandElement&& cmd, std::span<Reply::reply_type> replies);
 };
+
+namespace Detail {
+
+template<size_t OrigSize, typename T, typename... Ts>
+constexpr bool reply_extractor_helper(auto& out, std::span<Reply::reply_type> in) {
+    Reply::reply_type&& head = std::move(in.front());
+
+    if (!std::holds_alternative<T>(head))
+        return false;
+
+    std::get<OrigSize - sizeof...(Ts) - 1>(out) = std::move(std::get<T>(std::move(head)));
+
+    if constexpr (sizeof...(Ts) != 0) {
+        return reply_extractor_helper<OrigSize, Ts...>(out, in.subspan(1));
+    } else {
+        return true;
+    }
+}
+
+}
+
+template<typename... Ts> constexpr std::optional<std::tuple<Ts...>> extract_replies_from_range(auto&& replies) {
+    if (replies.size() != sizeof...(Ts))
+        return std::nullopt;
+
+    std::tuple<Ts...> ret;
+    if (!Detail::reply_extractor_helper<sizeof...(Ts), Ts...>(ret, { replies }))
+        return std::nullopt;
+
+    return ret;
+}
+
+template<typename T> constexpr bool extract_single_reply(T& out, auto&& replies) {
+    if (replies.size() != 2)
+        return false;
+
+    if (!std::holds_alternative<T>(replies[0]))
+        return false;
+
+    if (!std::holds_alternative<Reply::Okay>(replies[1]))
+        return false;
+
+    out = std::get<T>(replies[0]);
+    return true;
+}
 
 }

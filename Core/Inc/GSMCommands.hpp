@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <span>
 #include <string_view>
 #include <variant>
 
@@ -14,6 +15,12 @@ enum class CFUNType : int {
     // default
     Full = 1,
     DisableTxRxCircuits = 4,
+};
+
+enum class ErrorVerbosity : int {
+    DisableMEE = 0,
+    MEECode = 1,
+    MEEString = 2,
 };
 
 enum class CPINStatus {
@@ -53,6 +60,7 @@ namespace Reply {
 
 struct PeriodicMessage;
 struct Okay;
+struct Error;
 struct Ready;
 struct CFUN;
 struct CPIN;
@@ -62,10 +70,13 @@ struct SMSReady;
 struct GPRSStatus;
 struct PositionAndTime;
 struct HTTPResponseReady;
+struct HTTPResponse;
+struct ResetChallenge;
+struct HTTPReadyForData;
 
 using reply_type = std::variant<
   PeriodicMessage, Okay, Ready, CFUN, CPIN, BearerParameters, CallReady, SMSReady, GPRSStatus, PositionAndTime,
-  HTTPResponseReady>;
+  HTTPResponseReady, HTTPResponse, ResetChallenge, HTTPReadyForData>;
 
 tl::expected<reply_type, std::string_view> parse_reply(std::string_view line);
 
@@ -74,6 +85,7 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line);
 namespace Command {
 
 struct AT;
+struct SetErrorVerbosity;
 struct Echo;
 struct CFUN;
 struct SetBearerParameter;
@@ -85,16 +97,19 @@ struct QueryGPRS;
 struct DetachFromGPRS;
 struct QueryPositionAndTime;
 struct HTTPInit;
+struct HTTPTerm;
 struct HTTPSetBearer;
 struct HTTPSetURL;
 struct HTTPSetUA;
+struct HTTPContentType;
 struct HTTPMakeRequest;
 struct HTTPRead;
+struct HTTPData;
 
 using command_type = std::variant<
-  AT, Echo, CFUN, SetBearerParameter, QueryBearerParameters, OpenBearer, CloseBearer, AttachToGPRS, QueryGPRS,
-  DetachFromGPRS, QueryPositionAndTime, HTTPInit, HTTPSetBearer, HTTPSetURL, HTTPSetUA, HTTPMakeRequest, HTTPRead>;
-
+  AT, SetErrorVerbosity, Echo, CFUN, SetBearerParameter, QueryBearerParameters, OpenBearer, CloseBearer, AttachToGPRS,
+  QueryGPRS, DetachFromGPRS, QueryPositionAndTime, HTTPInit, HTTPTerm, HTTPSetBearer, HTTPSetURL, HTTPSetUA,
+  HTTPMakeRequest, HTTPRead, HTTPContentType, HTTPData>;
 
 };
 
@@ -180,12 +195,37 @@ struct HTTPResponseReady {
     size_t body_length;
 };
 
+struct HTTPResponse {
+    using solicit_type = Command::HTTPRead;
+    inline static constexpr const char* name = "HTTPREAD";
+
+    size_t body_size;
+};
+
+struct ResetChallenge {
+    using solicit_type = Command::HTTPRead;
+    inline static constexpr const char* name = "CST_RESET_CHALLENGE";
+
+    std::array<uint8_t, 32> challenge;
+};
+
+struct HTTPReadyForData {
+    using solicit_type = Command::HTTPData;
+    inline static constexpr const char* name = "HTTPDATA(DOWNLOAD)";
+};
+
 };
 
 namespace Command {
 
 struct AT {
     inline static constexpr const char* name = "AT";
+};
+
+struct SetErrorVerbosity {
+    inline static constexpr const char* name = "CMEE";
+
+    ErrorVerbosity verbosity = ErrorVerbosity::DisableMEE;
 };
 
 struct Echo {
@@ -250,6 +290,10 @@ struct HTTPInit {
     inline static constexpr const char* name = "HTTPINIT";
 };
 
+struct HTTPTerm {
+    inline static constexpr const char* name = "HTTPTERM";
+};
+
 struct HTTPSetBearer {
     inline static constexpr const char* name = "HTTPARA(CID)";
 
@@ -270,6 +314,12 @@ struct HTTPSetUA {
     std::string_view user_agent = "https://github.com/xor-shift/TeleV2";
 };
 
+struct HTTPContentType {
+    inline static constexpr const char* name = "HTTPARA(CONTENT)";
+
+    std::string_view content_type;
+};
+
 struct HTTPMakeRequest {
     inline static constexpr const char* name = "HTTPACTION";
 
@@ -278,6 +328,14 @@ struct HTTPMakeRequest {
 
 struct HTTPRead {
     inline static constexpr const char* name = "HTTPREAD";
+};
+
+/// IMPORTANT NOTICE: the data `data` is pointing to *must* stay valid until an OK is received. NEVER EVER send this
+/// without waiting for a reply.
+struct HTTPData {
+    inline static constexpr const char* name = "HTTPDATA";
+
+    std::span<const char> data;
 };
 
 };
@@ -294,6 +352,7 @@ struct HTTPRead {
 
 FORMATTER_FACTORY(GSM::Command::CFUN, "AT+CFUN={}{}", static_cast<int>(v.fun_type), v.reset_before ? ",1" : "");
 FORMATTER_FACTORY(GSM::Command::AT, "AT");
+FORMATTER_FACTORY(GSM::Command::SetErrorVerbosity, "AT+CMEE={}", static_cast<int>(v.verbosity));
 FORMATTER_FACTORY(GSM::Command::Echo, "ATE{}", v.on ? "1" : "0");
 FORMATTER_FACTORY(
   GSM::Command::SetBearerParameter, "AT+SAPBR=3,{},\"{}\",\"{}\"", static_cast<int>(v.profile), v.tag, v.value
@@ -307,10 +366,16 @@ FORMATTER_FACTORY(GSM::Command::DetachFromGPRS, "AT+CGATT=0");
 FORMATTER_FACTORY(GSM::Command::QueryPositionAndTime, "AT+CIPGSMLOC=1,{}", static_cast<int>(v.profile));
 
 FORMATTER_FACTORY(GSM::Command::HTTPInit, "AT+HTTPINIT");
+FORMATTER_FACTORY(GSM::Command::HTTPTerm, "AT+HTTPTERM");
 FORMATTER_FACTORY(GSM::Command::HTTPSetBearer, "AT+HTTPPARA=\"CID\",{}", static_cast<int>(v.profile));
-FORMATTER_FACTORY(GSM::Command::HTTPSetURL, "AT+HTTPPARA=\"URL\",{}", v.url);
-FORMATTER_FACTORY(GSM::Command::HTTPSetUA, "AT+HTTPPARA=\"UA\",{}", v.user_agent);
+FORMATTER_FACTORY(GSM::Command::HTTPSetURL, "AT+HTTPPARA=\"URL\",\"{}\"", v.url);
+FORMATTER_FACTORY(GSM::Command::HTTPSetUA, "AT+HTTPPARA=\"UA\",\"{}\"", v.user_agent);
+FORMATTER_FACTORY(GSM::Command::HTTPContentType, "AT+HTTPPARA=\"CONTENT\",\"{}\"", v.content_type);
 FORMATTER_FACTORY(GSM::Command::HTTPMakeRequest, "AT+HTTPACTION={}", static_cast<int>(v.request_type));
 FORMATTER_FACTORY(GSM::Command::HTTPRead, "AT+HTTPREAD");
+FORMATTER_FACTORY(
+  GSM::Command::HTTPData, "AT+HTTPDATA={},{}", v.data.size(),
+  std::max(1000uz, std::min(120000uz, v.data.size() * 10 / 9600))
+);
 
 #undef FORMATTER_FACTORY

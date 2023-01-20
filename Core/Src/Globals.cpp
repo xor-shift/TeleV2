@@ -167,7 +167,7 @@ struct TerminalTask : StaticTask<2048> {
             std::copy_n(begin(sv), elem.sz, elem.data.data());
             sv = sv.substr(elem.sz);
 
-            if (xQueueSend(m_queue_handle, &elem, 0) != pdTRUE) {
+            if (xQueueSend(m_queue_handle, &elem, /*portMAX_DELAY*/ 0) != pdTRUE) {
                 break;
             }
         }
@@ -319,10 +319,7 @@ private:
 struct DiagnosticWatchdogTask final : Tele::StaticTask<2048> {
     ~DiagnosticWatchdogTask() noexcept override = default;
 
-    void create(const char* name) final override {
-        StaticTask::create(name);
-        Log::info("Watchdog", "this is a hack... the top-mode prompt destroys the first log entry");
-    }
+    void create(const char* name) final override { StaticTask::create(name); }
 
 protected:
     enum class WarningStatus : int {
@@ -335,6 +332,7 @@ protected:
         ResetCause last_reset_cause = get_reset_cause();
         Log::Severity severity = Log::Severity::Info;
 
+        Log::info("Watchdog", "this is a hack... the top-mode prompt destroys the first log entry");
         Log::info("Watchdog", "last reset cause was: {}", enum_name(last_reset_cause));
 
         if (!s_inter_reboot_data.initialize_if_needed()) {
@@ -491,7 +489,7 @@ void raw(Severity severity, std::string_view tag, std::string&& message) {
 
 }
 
-__attribute((noreturn)) extern "C" void halt_and_catch_fire(uint32_t code, const char* who) {
+extern "C" __attribute((noreturn)) void halt_and_catch_fire(uint32_t code, const char* who) {
 #ifndef NDEBUG
     asm volatile("bkpt");
 #endif

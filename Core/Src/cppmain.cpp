@@ -210,6 +210,7 @@ extern "C" void cpp_init() {
     s_gsm_coordinator.begin_rx();
 
     s_gsm_module_timer.create("gsm timer");
+    s_gsm_module_main.create("gsmmod main");
 
     /*struct xHeapStats heap_stats;
     vPortGetHeapStats(&heap_stats);

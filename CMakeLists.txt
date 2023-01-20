@@ -37,6 +37,9 @@ add_compile_options(-ffunction-sections -fdata-sections -fno-common -fmessage-le
 # Enable assembler files preprocessing
 add_compile_options($<$<COMPILE_LANGUAGE:ASM>:-x$<SEMICOLON>assembler-with-cpp>)
 
+# for C++
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-volatile")
+
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
     message(STATUS "Maximum optimization for speed")
     add_compile_options(-O3)
@@ -72,7 +75,6 @@ option(SCN_USE_EXCEPTIONS OFF)
 option(SCN_TYPE_DOUBLE OFF)
 option(SCN_USE_STATIC_LOCALE ON)
 option(SCN_TYPE_LONG_DOUBLE OFF)
-option(SCN_TYPE_BUFFER OFF)
 option(SCN_TYPE_CUSTOM OFF)
 option(SCN_USE_CSTD OFF)
 

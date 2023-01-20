@@ -1,6 +1,7 @@
 #include <GSM.hpp>
 
 #include <chrono>
+#include <deque>
 
 #include <scn/scn.h>
 #include <scn/tuple_return.h>
@@ -54,6 +55,10 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
         return SMSReady {};
     }
 
+    if (line.starts_with("DOWNLOAD")) {
+        return Reply::HTTPReadyForData {};
+    }
+
     if (line.starts_with("+CGATT: ")) {
         switch (line.back()) {
         case '0': return GPRSStatus { false };
@@ -62,7 +67,25 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
         }
     }
 
-    if (auto [res, cid, status, address] = scn::scan_tuple<char, char, std::string>(line, "+SAPBR: {},{},{}"); res) {
+    if (auto [res, cid] = scn::scan_tuple<char>(line, "+SAPBR {}: DEACT"); res) {
+        BearerParameters reply {
+            .status = BearerStatus::Closed,
+            .ipv4 = true,
+            .ip_address = { { 1, 2, 3, 4 } },
+        };
+
+        switch (cid) {
+        case '1': reply.profile = BearerProfile::Profile0; break;
+        case '2': reply.profile = BearerProfile::Profile1; break;
+        case '3': reply.profile = BearerProfile::Profile2; break;
+        default: return tl::unexpected { "bad bearer profile" };
+        }
+
+        return reply;
+    }
+
+    if (auto [res, cid, status, address] = scn::scan_tuple<char, char, scn::string_view>(line, "+SAPBR: {},{},{}");
+        res) {
         BearerParameters reply {
             .ipv4 = true,
             .ip_address = { { 1, 2, 3, 4 } },
@@ -125,35 +148,46 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
         };
     }
 
-    /*
-    if (auto res = ctre::match<"^\\+HTTPACTION: ([012]),([0-9]{3}),([0-9]+)">(line); res) {
-        //"+HTTPACTION: 0,200,38"
-
-        auto [whole, method_str, code_str, length_str] = res;
-
-        TRY_PARSE(int, method, method_str);
-        TRY_PARSE(int, code, code_str);
-        TRY_PARSE(size_t, length, length_str);
+    if (auto [res, method, status_code, data_length]
+        = scn::scan_tuple<char, int, size_t>(line, "+HTTPACTION: {},{},{}");
+        res) {
 
         HTTPResponseReady ret {
-            .code = code,
-            .body_length = length,
+            .code = status_code,
+            .body_length = data_length,
         };
 
         switch (method) {
-        case static_cast<int>(HTTPRequestType::GET): ret.method = HTTPRequestType::GET; break;
-        case static_cast<int>(HTTPRequestType::POST): ret.method = HTTPRequestType::POST; break;
-        case static_cast<int>(HTTPRequestType::HEAD): ret.method = HTTPRequestType::HEAD; break;
-        default: return tl::unexpected { "bad http request method" };
+        case '0': ret.method = HTTPRequestType::GET; break;
+        case '1': ret.method = HTTPRequestType::POST; break;
+        case '2': ret.method = HTTPRequestType::HEAD; break;
+        default: return tl::unexpected { "bad http method" };
         }
 
         return ret;
     }
 
-    if (auto res = ctre::match<"^\\+SAPBR ([123]): DEACT">(line); res) {
-        //
+    if (auto [res, data_length] = scn::scan_tuple<size_t>(line, "+HTTPREAD: {}"); res) {
+        return Reply::HTTPResponse {
+            .body_size = data_length,
+        };
     }
-     */
+
+    if (auto [res, challenge] = scn::scan_tuple<scn::string_view>(line, "+CST_RESET_CHALLENGE {}"); res) {
+        if (challenge.size() != 64) {
+            return tl::unexpected { "bad challenge length" };
+        }
+
+        std::array<uint8_t, 32> bigint;
+        auto conv_res = Tele::from_chars<uint8_t>({ bigint }, { challenge }, std::endian::big);
+        if (conv_res.ec != std::errc()) {
+            return tl::unexpected { "bad challenge integer" };
+        }
+
+        return Reply::ResetChallenge {
+            .challenge = bigint,
+        };
+    }
 
     return tl::unexpected { "line did not match any known replies" };
 
@@ -162,7 +196,7 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
 
 }
 
-void TimerModule::operator()() {
+[[noreturn]] void TimerModule::operator()() {
     for (;;) {
         vTaskDelay(500);
 
@@ -194,170 +228,185 @@ void LoggerModule::incoming_reply(Coordinator&, Reply::reply_type const& reply) 
     std::visit(visitor, reply);
 }
 
-void MainModule::reset_state() {
-    m_ready = false;
-    m_functional = false;
-    m_have_sim = false;
-    m_call_ready = false;
-    m_sms_ready = false;
+bool MainModule::initialize() {
+    bool was_open = true;
+    for (size_t i = 0; !m_ready; i++) {
+        vTaskDelay(100);
+        if (i >= 50) {
+            was_open = false;
+            break;
+        }
+    }
 
-    m_bearer_open = false;
-    m_gprs_open = false;
+    Log::info("GSM Main Module", "the module was{} open", was_open ? "" : "n't");
 
-    m_requested_bearer = false;
-    m_requested_gprs = false;
-    m_requested_http = false;
-    m_requested_reset = false;
+    // std::ignore = m_coordinator->send_command_async(this, Command::AT {});
+    // std::ignore = m_coordinator->send_command_async(this, Command::SetErrorVerbosity { ErrorVerbosity::MEEString });
+    if (!was_open) {
+        std::ignore = m_coordinator->send_command_async(this, Command::CFUN { CFUNType::Full, true });
+    }
+
+    for (size_t i = 0; !m_sms_ready || !m_call_ready; i++) {
+        vTaskDelay(100);
+        if (i >= 150) // 15 secs
+            return false;
+    }
+
+    m_coordinator->send_command_async(this, Command::SetBearerParameter { BearerProfile::Profile0, "Contype", "GPRS" });
+    m_coordinator->send_command_async(this, Command::SetBearerParameter { BearerProfile::Profile0, "APN", "internet" });
+    m_coordinator->send_command_async(this, Command::OpenBearer { BearerProfile::Profile0 });
+
+    for (size_t i = 0;; i++) {
+        vTaskDelay(100);
+        if (i >= 150) // 15 secs
+            return false;
+
+        Command::QueryBearerParameters cmd { BearerProfile::Profile0 };
+        Reply::BearerParameters reply;
+
+        if (!extract_single_reply(reply, m_coordinator->send_command_async(this, cmd)))
+            continue;
+
+        if (reply.status != BearerStatus::Connected || reply.profile != BearerProfile::Profile0)
+            continue;
+
+        break;
+    }
+
+    m_coordinator->send_command_async(this, Command::AttachToGPRS {});
+
+    for (size_t i = 0;; i++) {
+        vTaskDelay(100);
+        if (i >= 150) // 15 secs
+            return false;
+
+        Command::QueryGPRS cmd {};
+        Reply::GPRSStatus reply;
+
+        if (!extract_single_reply(reply, m_coordinator->send_command_async(this, cmd)))
+            continue;
+
+        if (!reply.attached)
+            continue;
+
+        break;
+    }
+
+    Reply::ResetChallenge challenge;
+    std::tie(std::ignore, challenge, std::ignore) = TRY_OR_RET(
+      false, extract_replies_from_range<Reply::HTTPResponse, Reply::ResetChallenge, Reply::Okay>(
+               TRY_OR_RET(false, http_request(Tele::Config::Endpoints::reset_request, HTTPRequestType::GET))
+             )
+    );
+
+    auto signature = P256::sign(Tele::g_privkey, data(challenge.challenge));
+    std::array<char, 128> challenge_response_buffer;
+    std::span<char> challenge_response_r { begin(challenge_response_buffer), begin(challenge_response_buffer) + 64 };
+    std::span<char> challenge_response_s { begin(challenge_response_buffer) + 64, end(challenge_response_buffer) };
+    std::ignore = Tele::to_chars<uint32_t>({ signature.r }, challenge_response_r, std::endian::big);
+    std::ignore = Tele::to_chars<uint32_t>({ signature.s }, challenge_response_s, std::endian::big);
+
+    std::ignore = http_request(
+      Tele::Config::Endpoints::reset_request, HTTPRequestType::POST, "text/plain",
+      { begin(challenge_response_buffer), end(challenge_response_buffer) }
+    );
+
+    return true;
 }
 
-void MainModule::periodic_callback() {
-    auto bail = [this] {
-        m_coordinator->send_command(
-          this,
-          Command::CFUN {
-            .fun_type = CFUNType::Full,
-            .reset_before = true,
-          },
-          false
-        );
-        m_timer = 0;
-        reset_state();
-    };
-
-    m_timer += 1;
-
-    if (m_timer >= 60) { // 30 seconds
-        if (!m_bearer_open) {
-            bail();
-            return;
-        }
-    } else if (m_timer >= 40) { // 20 seconds
-        if (!m_call_ready || !m_sms_ready) {
-            bail();
-            return;
-        }
+int MainModule::main() {
+    if (!initialize()) {
+        return 1;
     }
 
-    if (!m_call_ready || !m_sms_ready)
-        return;
+    for (;;) {
+        vTaskDelay(1000);
+    }
 
-    if (!m_bearer_open) {
-        if (!m_requested_bearer) {
-            m_requested_bearer = true;
+    return -1;
+}
 
-            m_coordinator->send_command(
-              this,
-              Command::SetBearerParameter {
-                .profile = BearerProfile::Profile0,
-                .tag = "Contype",
-                .value = "GPRS",
-              },
-              false
-            );
+std::optional<Reply::HTTPResponseReady> MainModule::wait_for_http(BaseType_t timeout_decisecs) {
+    std::optional<Reply::HTTPResponseReady> ret = std::nullopt;
 
-            m_coordinator->send_command(
-              this,
-              Command::SetBearerParameter {
-                .profile = BearerProfile::Profile0,
-                .tag = "APN",
-                .value = "internet",
-              },
-              false
-            );
-
-            m_coordinator->send_command(
-              this,
-              Command::OpenBearer {
-                .profile = BearerProfile::Profile0,
-              },
-              false
-            );
+    for (size_t i = 0; i < timeout_decisecs; i++) {
+        if (!m_last_http_response) {
+            vTaskDelay(100);
+            continue;
         }
 
-        m_coordinator->send_command(
-          this,
-          Command::QueryBearerParameters {
-            .profile = BearerProfile::Profile0,
-          },
-          false
-        );
-
-        return;
+        std::swap(ret, m_last_http_response);
+        break;
     }
 
-    if (!m_gprs_open) {
-        if (!m_requested_gprs) {
-            m_requested_gprs = true;
+    return ret;
+}
 
-            m_coordinator->send_command(this, Command::AttachToGPRS {}, false);
-        }
+std::optional<std::vector<Reply::reply_type>> MainModule::http_request(
+  std::string_view url, HTTPRequestType method, std::string_view content_type, std::string_view content
+) {
+    m_coordinator->send_command_async(this, Command::HTTPInit {});
+    m_coordinator->send_command_async(this, Command::HTTPSetBearer { BearerProfile::Profile0 });
+    m_coordinator->send_command_async(this, Command::HTTPSetUA { "https://github.com/xor-shift/TeleV2" });
+    m_coordinator->send_command_async(this, Command::HTTPSetURL { url });
 
-        m_coordinator->send_command(this, Command::QueryGPRS {}, false);
-        return;
+    if (content_type != "") {
+        m_coordinator->send_command_async(this, Command::HTTPContentType { content_type });
+        m_coordinator->send_command_async(this, Command::HTTPData { .data = { begin(content), end(content) } });
     }
 
-    if (!m_requested_http) {
-        m_requested_http = true;
-        m_coordinator->send_command(this, Command::HTTPInit {}, false);
-        m_coordinator->send_command(this, Command::HTTPSetBearer { .profile = BearerProfile::Profile0 }, false);
-        m_coordinator->send_command(
-          this, Command::HTTPSetUA { .user_agent = "https://github.com/xor-shift/TeleV2" }, false
-        );
-        return;
-    }
+    m_coordinator->send_command_async(this, Command::HTTPMakeRequest { method });
 
-    if (!m_requested_reset) {
-        m_requested_reset = true;
-        m_coordinator->send_command(this, Command::HTTPSetURL { .url = Tele::Config::Endpoints::reset_request }, false);
-        m_coordinator->send_command(this, Command::HTTPMakeRequest { .request_type = HTTPRequestType::GET }, false);
-        return;
-    }
+    TRYX(wait_for_http());
 
-    // all's well, periodically check sanity (and location (and time))
+    auto ret = m_coordinator->send_command_async(this, Command::HTTPRead {});
 
-    switch (m_timer % 10) { // 5 second timeslots
-    case 0: m_coordinator->send_command(this, Command::QueryGPRS {}, false); break;
-    case 5: m_coordinator->send_command(this, Command::QueryBearerParameters { BearerProfile::Profile0 }, false); break;
-    default: break;
-    }
+    m_coordinator->send_command_async(this, Command::HTTPTerm {});
 
-    switch (m_timer % 60) { // 30 seconds timeslots
-    case 51: m_coordinator->send_command(this, Command::QueryPositionAndTime {}, false); break;
-    default: break;
+    return ret;
+}
+
+[[noreturn]] void MainModule::operator()() {
+    if (m_coordinator == nullptr)
+        Error_Handler();
+
+    static const TickType_t s_fail_wait = 2500;
+
+    for (size_t retries = 0;; retries++) {
+        int res = main();
+        Log::warn("GSM Main", "the main procedure failed with code {}", res);
+        Log::warn("GSM Main", "waiting {} ticks before restarting for retry no #{}", s_fail_wait, retries + 1);
+        vTaskDelay(s_fail_wait);
+
+        m_ready = false;
+        m_functional = false;
+        m_have_sim = false;
+        m_call_ready = false;
+        m_sms_ready = false;
+        m_bearer_open = false;
+        m_gprs_open = false;
     }
 }
 
 void MainModule::incoming_reply(GSM::Coordinator&, Reply::reply_type const& reply) {
     Stf::MultiVisitor visitor {
-        [this](Reply::PeriodicMessage const& message) { periodic_callback(); },
         [this](Reply::Ready const&) { m_ready = true; },
         [this](Reply::CFUN const&) { m_functional = true; },
         [this](Reply::CPIN const&) { m_have_sim = true; },
         [this](Reply::SMSReady const&) { m_sms_ready = true; },
         [this](Reply::CallReady const&) { m_call_ready = true; },
-        [this](Reply::GPRSStatus const& reply) { m_gprs_open = reply.attached; },
-        [this](Reply::PositionAndTime const& reply) { Tele::set_time(reply.unix_time); },
-        [this](Reply::BearerParameters const& reply) {
-            if (reply.profile != BearerProfile::Profile0) {
-                return;
-            }
-
-            if (reply.status == BearerStatus::Connected) {
-                m_bearer_open = true;
-            } else {
-                m_bearer_open = false;
-                m_gprs_open = false;
-            }
-        },
         [this](Reply::HTTPResponseReady const& reply) {
-            m_coordinator->send_command(this, Command::HTTPRead {}, false);
+            // FIXME: race
+            // this function is called from another thread, we could be reading m_last_http_response while it is being
+            // written into
+            // make ABSOLUTELY SURE that there are no more than one requests being made at a time, if that is even
+            // possible
+            // TODO: add an unsolicited reply queue to all modules and signal unsolicited replies using that.
+            // (and never call any function of the modules from within the coordinator's thread)
+            m_last_http_response = reply;
         },
         [](auto) {},
     };
-
-    /*if (!std::holds_alternative<Reply::PeriodicMessage>(reply)) {
-        m_timer = 0;
-    }*/
 
     std::visit(visitor, reply);
 }
@@ -434,13 +483,41 @@ uint32_t Coordinator::send_command(Module* who, Command::command_type&& command,
     return order;
 }
 
+std::vector<Reply::reply_type> Coordinator::send_command_async(Module* who, Command::command_type&& command) {
+    std::vector<Reply::reply_type> container {};
+    uint32_t order = next_command_order++;
+
+    SemaphoreHandle_t sema = xSemaphoreCreateBinary();
+
+    queue_elem_type elem = CommandElement {
+        .order = order,
+        .who = who,
+
+        .reply_container = &container,
+        .sema = sema,
+
+        .command = command,
+    };
+
+    xQueueSend(m_queue_handle, &elem, portMAX_DELAY);
+    // FIXME: race!
+    // realistically, the sim800l will not respond before a context switch back to this task happens
+    // i will leave this comment as-is even if i have to eat my words
+    if (xSemaphoreTake(sema, portMAX_DELAY) != pdTRUE) {
+        Error_Handler();
+    }
+
+    return container;
+}
+
 void Coordinator::send_command_now(Command::command_type const& command) {
     std::visit(
-      [this](auto const& cmd) {
-          Log::debug("GSM Coordinator", "Sending a \"{}\" command", cmd.name);
+      [this]<typename T>(T const& cmd) {
+          Log::debug("GSM Coordinator", "sending a \"{}\" command", cmd.name);
 
           auto str = fmt::format("{}\r\n", cmd);
           StreamBufferHandle_t& handle = m_transmit_task.stream();
+          // Log::debug("GSM Coordinator", "sending line: {}", str);
 
           Tele::in_chunks(std::span(begin(str), end(str)), 16, [&handle](std::span<const char> chunk) {
               size_t sent = xStreamBufferSend(handle, data(chunk), size(chunk), portMAX_DELAY);
@@ -460,18 +537,21 @@ void Coordinator::forge_reply(Module* who, Reply::reply_type&& reply) {
 }
 
 void Coordinator::fullfill_command(CommandElement&& cmd, std::span<Reply::reply_type> replies) {
-
+    for (auto const& reply : replies) {
+        cmd.who->incoming_reply(*this, reply);
+    }
 }
 
-void Coordinator::operator()() {
-    queue_elem_type elem = CommandElement {};
+struct CoordinatorQueueHelper {
+    Coordinator& coordinator;
 
-    std::vector<Reply::reply_type> reply_buffer;
-    std::optional<CommandElement> active_command = std::nullopt;
+    std::vector<Reply::reply_type> reply_buffer {};
+    std::optional<Coordinator::CommandElement> active_command = std::nullopt;
+    std::deque<Coordinator::CommandElement> command_queue {};
 
-    auto new_reply = [&](Reply::reply_type&& reply) {
+    void new_reply(Reply::reply_type&& reply) {
         bool solicited = std::visit(
-          [&active_command]<typename T>(T const&) {
+          [&]<typename T>(T const&) -> bool {
               if constexpr (std::is_same_v<typename T::solicit_type, solicit_type_never>)
                   return false;
               else if constexpr (std::is_same_v<typename T::solicit_type, solicit_type_always>)
@@ -482,6 +562,11 @@ void Coordinator::operator()() {
           },
           reply
         );
+
+        // allow for snooping
+        for (Module* module : coordinator.m_registered_modules) {
+            module->incoming_reply(coordinator, reply);
+        }
 
         if (!solicited) {
             std::visit(
@@ -494,6 +579,18 @@ void Coordinator::operator()() {
             );
             return;
         }
+
+        if (active_command && std::holds_alternative<Command::HTTPData>(active_command->command) && std::holds_alternative<Reply::HTTPReadyForData>(reply)) {
+            Command::HTTPData& http_data = std::get<Command::HTTPData>(active_command->command);
+            Log::debug("GSM Coordinator", "since the active command is HTTPDATA, sending additional data...");
+
+            StreamBufferHandle_t& handle = coordinator.m_transmit_task.stream();
+            Tele::in_chunks(http_data.data, 16, [&handle](std::span<const char> chunk) {
+                size_t sent = xStreamBufferSend(handle, data(chunk), size(chunk), portMAX_DELAY);
+                return sent;
+            });
+        }
+
         bool finish_buffer = std::holds_alternative<Reply::Okay>(reply);
 
         reply_buffer.emplace_back(std::move(reply));
@@ -501,26 +598,64 @@ void Coordinator::operator()() {
         if (!finish_buffer)
             return;
 
-        Log::debug("GSM Reply Buffer", "OK reply, finishing buffer with size {}", reply_buffer.size());
+        // Log::debug("GSM Reply Buffer", "OK reply, finishing buffer with size {}", reply_buffer.size());
 
         if (!active_command) {
-            Log::debug("GSM Reply Buffer", "active_command does not have a value!");
+            Log::warn("GSM Reply Buffer", "active_command does not have a value!");
             return;
         }
 
-        Log::debug(
+        /*Log::debug(
           "GSM Reply Buffer", "the module that requested the command was situated at {}",
           reinterpret_cast<void*>(active_command->who)
-        );
+        );*/
 
-        fullfill_command(std::move(*active_command), reply_buffer);
+        coordinator.fullfill_command(std::move(*active_command), reply_buffer);
+
+        if (active_command->sema != nullptr) {
+            active_command->reply_container->reserve(reply_buffer.size());
+            copy(begin(reply_buffer), end(reply_buffer), back_inserter(*active_command->reply_container));
+            if (xSemaphoreGive(active_command->sema) != pdTRUE) {
+                Error_Handler();
+            }
+        }
+
         active_command = std::nullopt;
         reply_buffer.clear();
+
+        queue_action();
+    }
+
+    void new_command(Coordinator::CommandElement&& new_command) {
+        command_queue.emplace_back(std::move(new_command));
+
+        queue_action();
+    }
+
+private:
+    void queue_action() {
+        if (active_command.has_value())
+            return;
+
+        if (!command_queue.empty()) {
+            Coordinator::CommandElement new_command = command_queue.front();
+            command_queue.pop_front();
+            command_queue.shrink_to_fit();
+
+            active_command = new_command;
+            coordinator.send_command_now(new_command.command);
+        }
+    }
+};
+
+void Coordinator::operator()() {
+    CoordinatorQueueHelper helper {
+        .coordinator = *this,
     };
 
     Tele::DelimitedReader line_reader {
         [&](std::string_view line, bool overflown) {
-            Log::trace("GSM Coordinator", "Received line: {}", Tele::EscapedString { line });
+            // Log::trace("GSM Coordinator", "Received line: {}", Tele::EscapedString { line });
             if (overflown) {
                 Log::warn("GSM Coordinator", "Last line was cut short due to an overflow");
             }
@@ -536,38 +671,22 @@ void Coordinator::operator()() {
                 return;
             }
 
-            new_reply(std::move(*res));
-
-            /*for (Module* module : m_registered_modules) {
-                module->incoming_reply(*this, reply);
-            }*/
+            helper.new_reply(std::move(*res));
         },
         std::span(m_line_buffer),
         "\r\n",
     };
 
-    Stf::MultiVisitor visitor {
-        [&line_reader](DataElement const& elem) {
-            line_reader.add_chars({ data(elem.data), elem.sz }); //
-        },
-        [this](CommandElement const& elem) { send_command_now(elem.command); },
-    };
-
-    for (;;) {
+    for (queue_elem_type elem = CommandElement {};;) {
         if (xQueueReceive(m_queue_handle, &elem, portMAX_DELAY) != pdTRUE)
             Error_Handler();
 
         if (std::holds_alternative<DataElement>(elem)) {
             DataElement const& data = std::get<DataElement>(elem);
-
             line_reader.add_chars({ std::data(data.data), std::data(data.data) + data.sz });
         } else if (std::holds_alternative<CommandElement>(elem)) {
-            CommandElement const& command = std::get<CommandElement>(elem);
-
-            active_command = command;
+            helper.new_command(std::move(std::get<CommandElement>(elem)));
         }
-
-        // visit(visitor, elem);
     }
 }
 
