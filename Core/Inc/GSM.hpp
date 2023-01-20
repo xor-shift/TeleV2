@@ -76,7 +76,7 @@ private:
 
     std::optional<Reply::HTTPResponseReady> m_last_http_response {};
 
-    bool initialize();
+    bool initialize(std::span<uint32_t, 4> out_rng_vector);
     int main();
 
     std::optional<std::vector<Reply::reply_type>> http_request(

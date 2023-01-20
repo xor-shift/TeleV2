@@ -8,7 +8,6 @@
 
 #include <fmt/chrono.h>
 
-#include <CircularBuffer.hpp>
 #include <Globals.hpp>
 #include <UARTTasks.hpp>
 #include <benchmarks.hpp>

@@ -237,7 +237,6 @@ struct State {
         }
 
         return Stf::vector((raw / 65535.f - 1.f) * scale_mult);
-        return Stf::vector(raw / 32767.5f - 1.f);
     }
 
 private:

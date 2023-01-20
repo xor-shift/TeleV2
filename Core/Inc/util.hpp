@@ -140,7 +140,9 @@ from_chars(std::span<T, Extent> output, std::string_view input, std::endian repr
         const size_t current_segment_size = i == full_segment_count ? excess : segment_size;
         const size_t current_segment_begin = input.size() - i * segment_size - current_segment_size;
         std::string_view segment = input.substr(current_segment_begin, current_segment_size);
-        segment.remove_prefix(segment.find_first_not_of('0'));
+        segment.remove_prefix(std::min(segment.find_first_not_of('0'), segment.size()));
+        if (segment.empty())
+            segment = "0";
 
         T temp;
         std::from_chars_result res = std::from_chars(segment.begin(), segment.end(), temp, 16);

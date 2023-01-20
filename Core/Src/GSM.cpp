@@ -1,7 +1,7 @@
 #include <GSM.hpp>
 
 #include <chrono>
-#include <deque>
+#include <list>
 
 #include <scn/scn.h>
 #include <scn/tuple_return.h>
@@ -11,6 +11,7 @@
 #include <cmsis_os.h>
 
 #include <Globals.hpp>
+#include <Packets.hpp>
 #include <secrets.hpp>
 #include <stdcompat.hpp>
 #include <util.hpp>
@@ -31,6 +32,10 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
 
     if (line.starts_with("OK")) {
         return Okay {};
+    }
+
+    if (line.starts_with("ERRO")) {
+        return Error {};
     }
 
     if (line.starts_with("RDY")) {
@@ -189,6 +194,24 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
         };
     }
 
+    if (auto [res, code] = scn::scan_tuple<int>(line, "+CST_RESET_FAIL {}"); res) {
+        return ResetFailure { code };
+    }
+
+    if (auto [res, rng_vector_str] = scn::scan_tuple<scn::string_view>(line, "+CST_RESET_SUCC {}"); res) {
+        if (rng_vector_str.size() != 32) {
+            return tl::unexpected { "bad pRNG vector length" };
+        }
+
+        std::array<uint32_t, 4> prng_vector;
+        auto conv_res = Tele::from_chars<uint32_t>({ prng_vector }, { rng_vector_str }, std::endian::big);
+        if (conv_res.ec != std::errc()) {
+            return tl::unexpected { "bad pRNG vector" };
+        }
+
+        return ResetSuccess { prng_vector };
+    }
+
     return tl::unexpected { "line did not match any known replies" };
 
 #undef TRY_PARSE
@@ -228,7 +251,7 @@ void LoggerModule::incoming_reply(Coordinator&, Reply::reply_type const& reply) 
     std::visit(visitor, reply);
 }
 
-bool MainModule::initialize() {
+bool MainModule::initialize(std::span<uint32_t, 4> out_rng_vector) {
     bool was_open = true;
     for (size_t i = 0; !m_ready; i++) {
         vTaskDelay(100);
@@ -238,7 +261,7 @@ bool MainModule::initialize() {
         }
     }
 
-    Log::info("GSM Main Module", "the module was{} open", was_open ? "" : "n't");
+    Log::info("GSM Main", "the module was{} open", was_open ? "" : "n't");
 
     // std::ignore = m_coordinator->send_command_async(this, Command::AT {});
     // std::ignore = m_coordinator->send_command_async(this, Command::SetErrorVerbosity { ErrorVerbosity::MEEString });
@@ -303,24 +326,76 @@ bool MainModule::initialize() {
     std::array<char, 128> challenge_response_buffer;
     std::span<char> challenge_response_r { begin(challenge_response_buffer), begin(challenge_response_buffer) + 64 };
     std::span<char> challenge_response_s { begin(challenge_response_buffer) + 64, end(challenge_response_buffer) };
-    std::ignore = Tele::to_chars<uint32_t>({ signature.r }, challenge_response_r, std::endian::big);
-    std::ignore = Tele::to_chars<uint32_t>({ signature.s }, challenge_response_s, std::endian::big);
+    std::ignore = Tele::to_chars<uint32_t>({ signature.r }, challenge_response_r, std::endian::little);
+    std::ignore = Tele::to_chars<uint32_t>({ signature.s }, challenge_response_s, std::endian::little);
 
-    std::ignore = http_request(
-      Tele::Config::Endpoints::reset_request, HTTPRequestType::POST, "text/plain",
-      { begin(challenge_response_buffer), end(challenge_response_buffer) }
+    Reply::ResetSuccess reset_success;
+    std::tie(std::ignore, reset_success, std::ignore) = TRY_OR_RET(
+      false, extract_replies_from_range<Reply::HTTPResponse, Reply::ResetSuccess, Reply::Okay>(TRY_OR_RET(
+               false, http_request(
+                        Tele::Config::Endpoints::reset_request, HTTPRequestType::POST, "text/plain",
+                        { begin(challenge_response_buffer), end(challenge_response_buffer) }
+                      )
+             ))
     );
+    std::copy(begin(reset_success.prng_vector), end(reset_success.prng_vector), begin(out_rng_vector));
+
+    Log::debug(
+      "GSM Main", "received prng vector: {:08X} {:08X} {:08X} {:08X}", //
+      reset_success.prng_vector[0],                                    //
+      reset_success.prng_vector[1],                                    //
+      reset_success.prng_vector[2],                                    //
+      reset_success.prng_vector[3]
+    );
+
+    Reply::PositionAndTime pos_time_reply;
+    if (!extract_single_reply(
+          pos_time_reply, m_coordinator->send_command_async(this, Command::QueryPositionAndTime {})
+        )) {
+        return false;
+    }
+    Log::debug("GSM Main", "setting time to: {}", pos_time_reply.unix_time);
+    Tele::set_time(pos_time_reply.unix_time);
 
     return true;
 }
 
 int MainModule::main() {
-    if (!initialize()) {
+    Tele::PacketSequencer sequencer {};
+    std::array<uint32_t, 4> initial_vector;
+
+    Log::set_min_severity(Log::Severity::Trace);
+    if (!initialize(initial_vector)) {
         return 1;
     }
+    Log::set_min_severity(Log::Severity::Info);
+
+    sequencer.reset(initial_vector);
 
     for (;;) {
-        vTaskDelay(1000);
+        Tele::FullPacket packet {
+            .speed = 1,
+            .bat_temp_readings = { 2, 3, 4, 5, 6 },
+            .voltage = 7,
+            .remaining_wh = 8,
+
+            .longitude = 9,
+            .latitude = 10,
+
+            .free_heap_space = xPortGetFreeHeapSize(),
+            .amt_allocs = 0,
+            .amt_frees = 0,
+            .performance = { 0, 0, 0 },
+        };
+
+        std::string data_to_send = sequencer.sequence(std::move(packet));
+
+        auto res = http_request(
+          Tele::Config::Endpoints::packet_essentials, HTTPRequestType::POST, "text/plain",
+          std::string_view { data_to_send }
+        );
+
+        // vTaskDelay(5000);
     }
 
     return -1;
@@ -507,6 +582,8 @@ std::vector<Reply::reply_type> Coordinator::send_command_async(Module* who, Comm
         Error_Handler();
     }
 
+    vSemaphoreDelete(sema);
+
     return container;
 }
 
@@ -547,7 +624,7 @@ struct CoordinatorQueueHelper {
 
     std::vector<Reply::reply_type> reply_buffer {};
     std::optional<Coordinator::CommandElement> active_command = std::nullopt;
-    std::deque<Coordinator::CommandElement> command_queue {};
+    std::list<Coordinator::CommandElement> command_queue {};
 
     void new_reply(Reply::reply_type&& reply) {
         bool solicited = std::visit(
@@ -591,7 +668,7 @@ struct CoordinatorQueueHelper {
             });
         }
 
-        bool finish_buffer = std::holds_alternative<Reply::Okay>(reply);
+        bool finish_buffer = std::holds_alternative<Reply::Okay>(reply) || std::holds_alternative<Reply::Error>(reply);
 
         reply_buffer.emplace_back(std::move(reply));
 
@@ -640,7 +717,6 @@ private:
         if (!command_queue.empty()) {
             Coordinator::CommandElement new_command = command_queue.front();
             command_queue.pop_front();
-            command_queue.shrink_to_fit();
 
             active_command = new_command;
             coordinator.send_command_now(new_command.command);

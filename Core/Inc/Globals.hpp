@@ -59,6 +59,8 @@ enum class Severity : int {
     Error = 4,
 };
 
+void set_min_severity(Severity severity);
+
 void raw(Severity severity, std::string_view tag, std::string&& message);
 
 template<typename... Ts>

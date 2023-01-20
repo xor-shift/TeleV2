@@ -71,12 +71,15 @@ struct GPRSStatus;
 struct PositionAndTime;
 struct HTTPResponseReady;
 struct HTTPResponse;
-struct ResetChallenge;
 struct HTTPReadyForData;
 
+struct ResetChallenge;
+struct ResetFailure;
+struct ResetSuccess;
+
 using reply_type = std::variant<
-  PeriodicMessage, Okay, Ready, CFUN, CPIN, BearerParameters, CallReady, SMSReady, GPRSStatus, PositionAndTime,
-  HTTPResponseReady, HTTPResponse, ResetChallenge, HTTPReadyForData>;
+  PeriodicMessage, Okay, Error, Ready, CFUN, CPIN, BearerParameters, CallReady, SMSReady, GPRSStatus, PositionAndTime,
+  HTTPResponseReady, HTTPResponse, HTTPReadyForData, ResetChallenge, ResetFailure, ResetSuccess>;
 
 tl::expected<reply_type, std::string_view> parse_reply(std::string_view line);
 
@@ -126,6 +129,11 @@ struct PeriodicMessage {
 struct Okay {
     using solicit_type = solicit_type_always;
     inline static constexpr const char* name = "OK";
+};
+
+struct Error {
+    using solicit_type = solicit_type_always;
+    inline static constexpr const char* name = "ERROR";
 };
 
 struct Ready {
@@ -202,6 +210,13 @@ struct HTTPResponse {
     size_t body_size;
 };
 
+struct HTTPReadyForData {
+    using solicit_type = Command::HTTPData;
+    inline static constexpr const char* name = "HTTPDATA(DOWNLOAD)";
+};
+
+// custom ones
+
 struct ResetChallenge {
     using solicit_type = Command::HTTPRead;
     inline static constexpr const char* name = "CST_RESET_CHALLENGE";
@@ -209,9 +224,18 @@ struct ResetChallenge {
     std::array<uint8_t, 32> challenge;
 };
 
-struct HTTPReadyForData {
-    using solicit_type = Command::HTTPData;
-    inline static constexpr const char* name = "HTTPDATA(DOWNLOAD)";
+struct ResetFailure {
+    using solicit_type = Command::HTTPRead;
+    inline static constexpr const char* name = "CST_RESET_FAIL";
+
+    int code;
+};
+
+struct ResetSuccess {
+    using solicit_type = Command::HTTPRead;
+    inline static constexpr const char* name = "CST_RESET_SUCC";
+
+    std::array<uint32_t, 4> prng_vector;
 };
 
 };

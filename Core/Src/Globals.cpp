@@ -1,5 +1,7 @@
 #include <Globals.hpp>
 
+#include <atomic>
+
 #include <Stuff/Maths/Check/CRC.hpp>
 
 #include <queue.h>
@@ -472,11 +474,21 @@ constexpr std::string_view long_severity_name(Severity severity) {
     return "Invalid";
 }
 
+static std::atomic<Severity> min_severity = Severity::Trace;
+
+void set_min_severity(Severity severity) {
+    min_severity = severity;
+}
+
 void raw(Severity severity, std::string_view tag, std::string&& message) {
     if (severity == Severity::Warning) {
         HAL_GPIO_WritePin(Tele::k_led_port, Tele::k_led_pin_orange, GPIO_PIN_SET);
     } else if (severity == Severity::Error) {
         HAL_GPIO_WritePin(Tele::k_led_port, Tele::k_led_pin_red, GPIO_PIN_SET);
+    }
+
+    if (severity < min_severity.load()) {
+        return;
     }
 
     std::string_view severity_str = short_severity_name(severity);
