@@ -36,8 +36,7 @@ add_compile_options(-ffunction-sections -fdata-sections -fno-common -fmessage-le
 # Enable assembler files preprocessing
 add_compile_options($<$<COMPILE_LANGUAGE:ASM>:-x$<SEMICOLON>assembler-with-cpp>)
 
-# for C++
-set(CMAKE_CXX_FLAGS "$${CMAKE_CXX_FLAGS} -Wno-volatile")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-volatile -fno-rtti")
 
 if ("$${CMAKE_BUILD_TYPE}" STREQUAL "Release")
     message(STATUS "Maximum optimization for speed")
@@ -52,6 +51,17 @@ else ()
     message(STATUS "Minimal optimization, debug info included")
     add_compile_options(-O0 -g)
 endif ()
+
+set(STM_INC_DIRS
+        Drivers/STM32F4xx_HAL_Driver/Inc
+        Drivers/STM32F4xx_HAL_Driver/Inc/Legacy
+        Middlewares/Third_Party/FreeRTOS/Source/include
+        Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+        Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+        Drivers/CMSIS/Device/ST/STM32F4xx/Include
+        Drivers/CMSIS/Include
+        Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+        Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc)
 
 include_directories(${includes})
 
@@ -86,8 +96,14 @@ target_compile_options(fmt PRIVATE -Os)
 target_compile_options(scn PRIVATE -Os)
 target_compile_options(libstuff PRIVATE -Os)
 
+add_library(Tele
+        Tele/Src/LIS3DSH.cpp)
+
+target_include_directories(Tele PUBLIC Tele/Inc $${STM_INC_DIRS})
+target_link_libraries(Tele libstuff)
+
 add_executable($${PROJECT_NAME}.elf $${SOURCES} $${LINKER_SCRIPT})
-target_link_libraries($${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt ctre scn::scn)
+target_link_libraries($${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt ctre scn::scn Tele)
 
 target_include_directories($${PROJECT_NAME}.elf PRIVATE Core)
 

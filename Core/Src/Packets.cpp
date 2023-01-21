@@ -4,6 +4,9 @@
 
 #include <Globals.hpp>
 
+#include <Tele/CharConv.hpp>
+#include <Tele/Stream.hpp>
+
 namespace Tele {
 
 std::string PacketSequencer::sequence(Tele::packets_variant inner) {

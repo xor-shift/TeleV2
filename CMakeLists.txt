@@ -53,7 +53,21 @@ else ()
     add_compile_options(-O0 -g)
 endif ()
 
-include_directories(Core/Inc Drivers/STM32F4xx_HAL_Driver/Inc Drivers/STM32F4xx_HAL_Driver/Inc/Legacy Middlewares/Third_Party/FreeRTOS/Source/include Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F Drivers/CMSIS/Device/ST/STM32F4xx/Include Drivers/CMSIS/Include USB_DEVICE/App USB_DEVICE/Target Middlewares/ST/STM32_USB_Device_Library/Core/Inc Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc)
+set(STM_INC_DIRS
+        Drivers/STM32F4xx_HAL_Driver/Inc
+        Drivers/STM32F4xx_HAL_Driver/Inc/Legacy
+        Middlewares/Third_Party/FreeRTOS/Source/include
+        Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+        Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+        Drivers/CMSIS/Device/ST/STM32F4xx/Include
+        Drivers/CMSIS/Include
+        Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+        Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc)
+
+include_directories(Core/Inc
+        ${STM_INC_DIRS}
+        USB_DEVICE/App
+        USB_DEVICE/Target)
 
 add_definitions(-DDEBUG -DUSE_HAL_DRIVER -DSTM32F407xx)
 
@@ -86,8 +100,23 @@ target_compile_options(fmt PRIVATE -Os)
 target_compile_options(scn PRIVATE -Os)
 target_compile_options(libstuff PRIVATE -Os)
 
+add_library(Tele
+        Tele/Src/GSMModules/Logger.cpp
+        Tele/Src/GSMModules/Timer.cpp
+
+        Tele/Src/GSMCommands.cpp
+        Tele/Src/GSMCoordinator.cpp
+        Tele/Src/GyroTask.cpp
+        Tele/Src/LIS3DSH.cpp
+        Tele/Src/Log.cpp
+        Tele/Src/Parsers.cpp
+        Tele/Src/STUtilities.cpp)
+
+target_include_directories(Tele PUBLIC Tele/Inc ${STM_INC_DIRS})
+target_link_libraries(Tele fmt::fmt scn::scn libstuff)
+
 add_executable(${PROJECT_NAME}.elf ${SOURCES} ${LINKER_SCRIPT})
-target_link_libraries(${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt scn::scn)
+target_link_libraries(${PROJECT_NAME}.elf p256-cortex-m4 libstuff fmt::fmt scn::scn Tele)
 
 target_include_directories(${PROJECT_NAME}.elf PRIVATE Core)
 

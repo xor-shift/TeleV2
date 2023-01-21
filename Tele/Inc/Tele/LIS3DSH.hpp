@@ -3,15 +3,12 @@
 #include <cstdint>
 #include <span>
 
+#include <stm32f4xx_hal.h>
+#include <stm32f4xx_hal_spi.h>
+
 #include <Stuff/Maths/BLAS/Vector.hpp>
 
-#include "main.h"
-
-extern "C" SPI_HandleTypeDef hspi1;
-
 namespace LIS {
-
-static SPI_HandleTypeDef& spi = hspi1;
 
 enum class Register : uint8_t {
     Info1 = 0x0D,  // ro

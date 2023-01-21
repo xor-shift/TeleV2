@@ -4,12 +4,13 @@
 #include <span>
 #include <string_view>
 
+#include <stm32f4xx_hal.h>
+#include <stm32f4xx_hal_uart.h>
 #include <cmsis_os.h>
 #include <stream_buffer.h>
 
-#include <main.h>
-#include <StaticTask.hpp>
-#include <util.hpp>
+#include <Tele/StaticTask.hpp>
+#include <Tele/STUtilities.hpp>
 
 template<typename Callback> struct ReceiveTask : Tele::StaticTask<1024> {
     constexpr ReceiveTask(UART_HandleTypeDef& huart, Callback&& cb = {}) noexcept

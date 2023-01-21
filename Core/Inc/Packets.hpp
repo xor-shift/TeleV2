@@ -11,8 +11,6 @@
 
 #include <Stuff/Serde/Serializers/JSON.hpp>
 
-#include <util.hpp>
-
 namespace Tele {
 
 struct EssentialsPacket {

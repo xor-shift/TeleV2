@@ -1,13 +1,13 @@
-#include "LIS3DSH.hpp"
-
-#include "cmsis_os.h"
+#include <Tele/LIS3DSH.hpp>
 
 #include <span>
+
+#include <cmsis_os.h>
 
 namespace LIS {
 
 void State::enable_chip(bool enable) const {
-    HAL_GPIO_WritePin(CS_I2C_SPI_GPIO_Port, CS_I2C_SPI_Pin, enable ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(cs_port, cs_pin, enable ? GPIO_PIN_RESET : GPIO_PIN_SET);
 }
 
 void State::write_register(Register reg, std::span<uint8_t> buf) const {
