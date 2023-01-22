@@ -2,10 +2,10 @@
 
 #include <stdcompat.hpp>
 
-#include <Stuff/Maths/Hash/Sha2.hpp>
 #include <Stuff/Intro/Builder.hpp>
-#include <Stuff/Intro/Introspectors/Span.hpp>
 #include <Stuff/Intro/Introspectors/Array.hpp>
+#include <Stuff/Intro/Introspectors/Span.hpp>
+#include <Stuff/Maths/Hash/Sha2.hpp>
 #include <Stuff/Serde/IntroSerializers.hpp>
 #include <Stuff/Serde/Serializables/Variant.hpp>
 
@@ -46,30 +46,37 @@ inline constexpr auto _libstf_adl_introspector(DiagnosticPacket&&) {
 }
 
 struct FullPacket {
+    float battery_voltages[27];
+    float battery_temps[5];
+
     float speed;
-    float bat_temp_readings[5];
-    float voltage;
     float remaining_wh;
 
     float longitude;
     float latitude;
 
+    uint32_t queue_fill_amt;
+    uint32_t tick_counter;
     uint32_t free_heap_space;
     uint32_t amt_allocs;
     uint32_t amt_frees;
-    uint32_t performance[3];
+    float cpu_usage;
 };
 
 inline constexpr auto _libstf_adl_introspector(FullPacket&&) {
     auto accessor = Stf::Intro::StructBuilder<FullPacket> {} //
+                      .add_simple<&FullPacket::battery_voltages, "v">()
+                      .add_simple<&FullPacket::battery_temps, "temps">()
                       .add_simple<&FullPacket::speed, "spd">()
-                      .add_simple<&FullPacket::bat_temp_readings, "temps">()
-                      .add_simple<&FullPacket::voltage, "v">()
                       .add_simple<&FullPacket::remaining_wh, "wh">()
-                      .add_simple<&FullPacket::free_heap_space, "free">()
+                      .add_simple<&FullPacket::longitude, "lon">()
+                      .add_simple<&FullPacket::latitude, "lat">()
+                      .add_simple<&FullPacket::queue_fill_amt, "q">()
+                      .add_simple<&FullPacket::tick_counter, "tc">()
+                      .add_simple<&FullPacket::free_heap_space, "heap">()
                       .add_simple<&FullPacket::amt_allocs, "alloc">()
                       .add_simple<&FullPacket::amt_frees, "free">()
-                      .add_simple<&FullPacket::performance, "perf">();
+                      .add_simple<&FullPacket::cpu_usage, "cu">();
     return accessor;
 }
 
@@ -94,7 +101,7 @@ inline constexpr auto _libstf_adl_introspector(Packet&&) {
 }
 
 struct PacketSequencer {
-    std::string sequence(packets_variant inner);
+    Packet sequence(packets_variant inner);
 
     void reset(std::span<uint32_t, 4> rng_vector);
 
@@ -102,7 +109,7 @@ private:
     uint32_t m_last_seq_id = 0;
     uint32_t m_rng_state[4] = { 0xDEADBEEF, 0xCAFEBABE, 0xDEADC0DE, 0x8BADF00D };
 
-    //CircularBuffer<Packet, 32> m_resend_window;
+    // CircularBuffer<Packet, 32> m_resend_window;
 
     static constexpr uint32_t xoshiro_next(uint32_t (&s)[4]) {
         const uint32_t result = std::rotl(s[0] + s[3], 7) + s[0];

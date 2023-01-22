@@ -25,7 +25,7 @@ protected:
     Coordinator* m_coordinator = nullptr;
 };
 
-struct Coordinator : Tele::StaticTask<8192> {
+struct Coordinator : Tele::StaticTask<4096> {
     static constexpr size_t k_queue_size = 32;
     friend struct CoordinatorQueueHelper;
 

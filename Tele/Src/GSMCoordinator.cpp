@@ -80,6 +80,9 @@ std::vector<Reply::reply_type> Coordinator::send_command_async(Module* who, Comm
     std::vector<Reply::reply_type> container {};
     uint32_t order = next_command_order++;
 
+    // "The semaphore is created in the 'empty' state"
+    // https://www.freertos.org/xSemaphoreCreateBinary.html
+    // this would not work with mutex semaphores
     SemaphoreHandle_t sema = xSemaphoreCreateBinary();
 
     queue_elem_type elem = CommandElement {
@@ -183,6 +186,8 @@ struct CoordinatorQueueHelper {
             );
 
             coordinator.fullfill_command(std::move(*active_command), reply_buffer);
+
+            active_command = std::nullopt;
             reply_buffer.clear();
 
             while (!command_queue.empty()) {

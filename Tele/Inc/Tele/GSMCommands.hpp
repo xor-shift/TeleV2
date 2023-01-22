@@ -17,6 +17,20 @@ enum class CFUNType : int {
     DisableTxRxCircuits = 4,
 };
 
+enum class BaudRate : int {
+    AutoBaud = 0,
+    BPS1k2 = 1200,
+    BPS2k4 = 2400,
+    BPS4k8 = 4800,
+    BPS9k6 = 9600,
+    BPS19k2 = 19200,
+    BPS38k4 = 38400,
+    BPS57k6 = 57600,
+    BPS115k2 = 115200,
+    BPS230k4 = 230400,
+    BPS460k8 = 460800,
+};
+
 enum class ErrorVerbosity : int {
     DisableMEE = 0,
     MEECode = 1,
@@ -88,7 +102,9 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line);
 namespace Command {
 
 struct AT;
+struct SetBaud;
 struct SetErrorVerbosity;
+struct SaveToNVRAM;
 struct Echo;
 struct CFUN;
 struct SetBearerParameter;
@@ -110,7 +126,7 @@ struct HTTPRead;
 struct HTTPData;
 
 using command_type = std::variant<
-  AT, SetErrorVerbosity, Echo, CFUN, SetBearerParameter, QueryBearerParameters, OpenBearer, CloseBearer, AttachToGPRS,
+  AT, SetBaud, SetErrorVerbosity, SaveToNVRAM, Echo, CFUN, SetBearerParameter, QueryBearerParameters, OpenBearer, CloseBearer, AttachToGPRS,
   QueryGPRS, DetachFromGPRS, QueryPositionAndTime, HTTPInit, HTTPTerm, HTTPSetBearer, HTTPSetURL, HTTPSetUA,
   HTTPMakeRequest, HTTPRead, HTTPContentType, HTTPData>;
 
@@ -252,6 +268,15 @@ struct SetErrorVerbosity {
     ErrorVerbosity verbosity = ErrorVerbosity::DisableMEE;
 };
 
+struct SaveToNVRAM {
+    inline static constexpr const char* name = "AT&W";
+};
+
+struct SetBaud {
+    inline static constexpr const char* name = "IPR";
+    BaudRate baud_rate = BaudRate::AutoBaud;
+};
+
 struct Echo {
     inline static constexpr const char* name = "ATE";
 
@@ -376,6 +401,8 @@ struct HTTPData {
 
 FORMATTER_FACTORY(GSM::Command::CFUN, "AT+CFUN={}{}", static_cast<int>(v.fun_type), v.reset_before ? ",1" : "");
 FORMATTER_FACTORY(GSM::Command::AT, "AT");
+FORMATTER_FACTORY(GSM::Command::SetBaud, "AT+IPR={}", static_cast<int>(v.baud_rate));
+FORMATTER_FACTORY(GSM::Command::SaveToNVRAM, "AT&W");
 FORMATTER_FACTORY(GSM::Command::SetErrorVerbosity, "AT+CMEE={}", static_cast<int>(v.verbosity));
 FORMATTER_FACTORY(GSM::Command::Echo, "ATE{}", v.on ? "1" : "0");
 FORMATTER_FACTORY(

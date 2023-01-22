@@ -198,26 +198,6 @@ extern "C" void cpp_init() {
 
     s_gsm_module_timer.create("gsm timer");
     s_gsm_module_main.create("gsm main");
-
-    /*struct xHeapStats heap_stats;
-    vPortGetHeapStats(&heap_stats);
-
-    Tele::PacketSequencer sequencer;
-
-    std::string buf;
-    Tele::PushBackStream stream { buf };
-    Stf::Serde::JSON::Serializer<Tele::PushBackStream<std::string>> serializer { stream };
-
-    Tele::EssentialsPacket inner_packet {
-        .speed = 3.1415926,
-        .bat_temp_readings { 2, 3, 4, 5, 6 },
-        .voltage = 2.718,
-        .remaining_wh = 1.618,
-    };
-
-    auto packet = sequencer.transmit(inner_packet);
-
-    Stf::serialize(serializer, packet);*/
 }
 
 extern "C" void cpp_os_exit() {

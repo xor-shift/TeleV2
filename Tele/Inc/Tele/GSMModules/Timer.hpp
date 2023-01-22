@@ -6,7 +6,7 @@ namespace GSM {
 
 struct TimerModule
     : Module
-    , Tele::StaticTask<4096> {
+    , Tele::StaticTask<1024> {
     // REMINDER TO SELF: this one needs a lot of stack space because of forge_reply works.
     // when we forge a reply, all modules get executed by the forger itself.
 

@@ -10,7 +10,7 @@
 
 namespace Tele {
 
-struct GyroTask : Tele::StaticTask<2048> {
+struct GyroTask : Tele::StaticTask<1024> {
     GyroTask(SPI_HandleTypeDef& spi, GPIO_TypeDef* cs_port, uint16_t cs_pin);
 
     ~GyroTask() noexcept override = default;

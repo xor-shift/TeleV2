@@ -1,19 +1,26 @@
 #include <MainGSMModule.hpp>
 
 #include <Stuff/Util/Hacks/Try.hpp>
+#include <Stuff/Util/Scope.hpp>
 #include <Stuff/Util/Visitor.hpp>
 
 #include <Tele/CharConv.hpp>
 #include <Tele/Log.hpp>
+#include <Tele/Stream.hpp>
 
 #include <Globals.hpp>
+#include <Packets.hpp>
 #include <secrets.hpp>
 #include <stdcompat.hpp>
-#include <Packets.hpp>
 
 namespace GSM {
 
-bool MainModule::initialize(std::span<uint32_t, 4> out_rng_vector) {
+void MainModule::create(const char* name) {
+    m_packet_forger.create("packet forger");
+    StaticTask::create(name);
+}
+
+bool MainModule::initialize_device() {
     bool was_open = false;
     for (size_t i = 0; !m_ready; i++) {
         vTaskDelay(100);
@@ -25,9 +32,16 @@ bool MainModule::initialize(std::span<uint32_t, 4> out_rng_vector) {
 
     Log::info("the module was{} open", was_open ? "" : "n't");
 
-    // std::ignore = m_coordinator->send_command_async(this, Command::AT {});
+    /*std::ignore = m_coordinator->send_command_async(this, Command::AT {});
+    std::ignore = m_coordinator->send_command_async(this, Command::Echo { false });
     std::ignore = m_coordinator->send_command_async(this, Command::SetErrorVerbosity { ErrorVerbosity::MEEString });
+    std::ignore = m_coordinator->send_command_async(this, Command::SetBaud { BaudRate::BPS460k8 });
+    std::ignore = m_coordinator->send_command_async(this, Command::SaveToNVRAM { });*/
+
     if (was_open) {
+        // it might have *just* opened, wait for it to finish booting
+        vTaskDelay(2000);
+
         std::ignore = m_coordinator->send_command_async(this, Command::CFUN { CFUNType::Full, true });
     }
 
@@ -77,6 +91,19 @@ bool MainModule::initialize(std::span<uint32_t, 4> out_rng_vector) {
         break;
     }
 
+    Reply::PositionAndTime pos_time_reply;
+    if (!extract_single_reply(
+          pos_time_reply, m_coordinator->send_command_async(this, Command::QueryPositionAndTime {})
+        )) {
+        return false;
+    }
+    Log::debug("setting time to: {}", pos_time_reply.unix_time);
+    Tele::set_time(pos_time_reply.unix_time);
+
+    return true;
+}
+
+bool MainModule::initialize_session(std::span<uint32_t, 4> out_rng_vector) {
     Reply::ResetChallenge challenge;
     std::tie(std::ignore, challenge, std::ignore) = TRY_OR_RET(
       false, extract_replies_from_range<Reply::HTTPResponse, Reply::ResetChallenge, Reply::Okay>(
@@ -104,58 +131,114 @@ bool MainModule::initialize(std::span<uint32_t, 4> out_rng_vector) {
 
     Log::debug(
       "received prng vector: {:08X} {:08X} {:08X} {:08X}", //
-      reset_success.prng_vector[0],                                    //
-      reset_success.prng_vector[1],                                    //
-      reset_success.prng_vector[2],                                    //
+      reset_success.prng_vector[0],                        //
+      reset_success.prng_vector[1],                        //
+      reset_success.prng_vector[2],                        //
       reset_success.prng_vector[3]
     );
-
-    Reply::PositionAndTime pos_time_reply;
-    if (!extract_single_reply(
-          pos_time_reply, m_coordinator->send_command_async(this, Command::QueryPositionAndTime {})
-        )) {
-        return false;
-    }
-    Log::debug("setting time to: {}", pos_time_reply.unix_time);
-    Tele::set_time(pos_time_reply.unix_time);
 
     return true;
 }
 
-int MainModule::main() {
-    Tele::PacketSequencer sequencer {};
-    std::array<uint32_t, 4> initial_vector;
-
-    if (!initialize(initial_vector)) {
-        return 1;
-    }
-
-    sequencer.reset(initial_vector);
+int MainModule::packet_loop() {
+    // clang-format off
+    TRY_OR_RET(1, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPInit {})));
+    TRY_OR_RET(1, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPSetBearer { BearerProfile::Profile0 })));
+    TRY_OR_RET(1, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPSetUA { "https://github.com/xor-shift/TeleV2" })));
+    TRY_OR_RET(1, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPSetURL { Tele::Config::Endpoints::packet_full })));
+    TRY_OR_RET(1, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPContentType { "text/plain" })));
+    // clang-format on
 
     for (;;) {
-        Tele::FullPacket packet {
-            .speed = 1,
-            .bat_temp_readings = { 2, 3, 4, 5, 6 },
-            .voltage = 7,
-            .remaining_wh = 8,
+        /*auto res = http_request(
+          Tele::Config::Endpoints::packet_full, HTTPRequestType::POST, "text/plain", std::string_view { data_to_send }
+        );*/
 
-            .longitude = 9,
-            .latitude = 10,
-
-            .free_heap_space = xPortGetFreeHeapSize(),
-            .amt_allocs = 0,
-            .amt_frees = 0,
-            .performance = { 0, 0, 0 },
-        };
+        // clang-format off
+        /*Tele::FullPacket packet {};
 
         std::string data_to_send = sequencer.sequence(std::move(packet));
 
-        auto res = http_request(
-          Tele::Config::Endpoints::packet_essentials, HTTPRequestType::POST, "text/plain",
-          std::string_view { data_to_send }
-        );
+        Log::g_logger.set_severity(Log::Severity::Info);
+        Stf::ScopeExit logger_guard { [] { //
+            Log::g_logger.set_severity(Log::Severity::Trace);
+        } };
 
-        // vTaskDelay(5000);
+        // clang-format off
+        TRY_OR_RET(2, extract_replies_from_range<Reply::HTTPReadyForData, Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPData { .data = { data_to_send } })));
+        TRY_OR_RET(2, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPMakeRequest { HTTPRequestType::POST })));
+        TRY_OR_RET(2, wait_for_http());
+        TRY_OR_RET(2, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPRead { })));
+        // clang-format on
+         */
+        // clang-format on
+
+        vTaskDelay(3000);
+
+        std::array<Tele::Packet, 20> arr;
+        size_t pending_packet_count = m_packet_forger.get_pending_packets(arr);
+        std::span<Tele::Packet> pending_packets { begin(arr), pending_packet_count };
+
+        std::string serialization_buffer;
+        Tele::PushBackStream serialization_stream { serialization_buffer };
+        Stf::Serde::JSON::Serializer<Tele::PushBackStream<std::string>> serializer { serialization_stream };
+        Stf::serialize(serializer, pending_packets);
+
+        Stf::Hash::SHA256State hash_state {};
+        hash_state.update(std::string_view { serialization_buffer });
+        std::array<uint32_t, 8> hash = hash_state.finish();
+        P256::Signature signature = sign(Tele::g_privkey, hash.data());
+
+        serialization_buffer += "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
+        serialization_buffer += "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
+
+        std::span<char> sig_span { end(serialization_buffer) - 128, end(serialization_buffer) };
+
+        Tele::to_chars(std::span(signature.r), sig_span.subspan(0, 64), std::endian::little);
+        Tele::to_chars(std::span(signature.s), sig_span.subspan(64, 64), std::endian::little);
+
+        // clang-format off
+        TRY_OR_RET(2, extract_replies_from_range<Reply::HTTPReadyForData, Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPData { .data = { serialization_buffer } })));
+        TRY_OR_RET(2, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPMakeRequest { HTTPRequestType::POST })));
+        TRY_OR_RET(2, wait_for_http());
+        TRY_OR_RET(2, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPRead { })));
+        // clang-format on
+    }
+    m_coordinator->send_command_async(this, Command::HTTPTerm {});
+
+    return 0;
+}
+
+int MainModule::main() {
+    if (!initialize_device()) {
+        return 1;
+    }
+
+    std::array<uint32_t, 4> initial_vector;
+
+    if (!initialize_session(initial_vector)) {
+        return 2;
+    }
+
+    m_packet_forger.reset_sequencer(initial_vector);
+
+    for (size_t i = 0;; i++) {
+        // watch out for spurious RDY messages
+        reset_state();
+
+        int res = packet_loop();
+        Log::warn("packet loop exited with status {}, retry count: {}", res, i);
+
+        if (m_ready) {
+            Log::warn("spurious RDY detected, reinitializing device");
+            for (size_t j = 0;; j++) {
+                if (initialize_device())
+                    break;
+                Log::warn("device initialization failed, retry count: {}", j);
+            }
+        }
+
+        vTaskDelay(500);
     }
 
     return -1;

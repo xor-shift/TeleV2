@@ -23,7 +23,7 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
         return Okay {};
     }
 
-    if (line.starts_with("ERRO")) {
+    if (line.starts_with("ERRO") || line.starts_with("+CME ERR")) {
         return Error {};
     }
 

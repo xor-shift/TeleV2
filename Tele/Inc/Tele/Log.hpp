@@ -83,11 +83,20 @@ struct Logger {
 #undef FACTORY
 #pragma pop_macro("FACTORY")
 
+    void set_severity(Severity severity) { m_severity = severity; }
+
+    bool should_log(LogMessage const& message) const { return m_severity.load() <= message.severity; }
+
 private:
     std::vector<std::unique_ptr<LogSink>> m_sinks;
+    std::atomic<Severity> m_severity { Severity::Trace };
 
     template<typename... Ts>
     void log_impl(std::source_location location, Severity severity, fmt::format_string<Ts...> fmt, Ts&&... args) {
+        if (m_severity.load() > severity) {
+            return;
+        }
+
         std::string formatted = fmt::format(fmt, std::forward<Ts>(args)...);
 
         /*size_t thread_id = ({

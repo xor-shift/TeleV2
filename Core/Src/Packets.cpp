@@ -9,7 +9,7 @@
 
 namespace Tele {
 
-std::string PacketSequencer::sequence(Tele::packets_variant inner) {
+/*std::string PacketSequencer::sequence(Tele::packets_variant inner) {
     int32_t timestamp
       = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
@@ -40,7 +40,23 @@ std::string PacketSequencer::sequence(Tele::packets_variant inner) {
     Tele::to_chars(std::span(signature.r), sig_span.subspan(0, 64), std::endian::little);
     Tele::to_chars(std::span(signature.s), sig_span.subspan(64, 64), std::endian::little);
 
-    return serialization_buffer;
+    return { serialization_buffer, packet };
+}*/
+
+Packet PacketSequencer::sequence(Tele::packets_variant inner) {
+    int32_t timestamp
+      = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+    Packet packet {
+        .sequence_id = m_last_seq_id++,
+        .timestamp = timestamp,
+        .rng_state = xoshiro_next(m_rng_state),
+        .data = inner,
+    };
+
+    // TODO: save packet in a resend window
+
+    return packet;
 }
 
 void PacketSequencer::reset(std::span<uint32_t, 4> rng_vector) {
