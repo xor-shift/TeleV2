@@ -1,0 +1,15 @@
+cmake-build-*
+.idea
+
+Core/Src/stm32*
+Core/Src/freertos.c
+Core/Src/syscalls.c
+Core/Src/sysmem.c
+Core/Src/system_stm32f4xx.c
+
+Core/Inc/stm32*
+
+Drivers
+Middlewares
+Misc
+USB_DEVICE

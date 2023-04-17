@@ -7,7 +7,7 @@
 
 #include <Tele/CharConv.hpp>
 
-namespace GSM::Reply {
+namespace Tele::GSM::Reply {
 
 tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
 #define TRY_PARSE(_type, _name, _str_name) \
@@ -17,7 +17,7 @@ tl::expected<reply_type, std::string_view> parse_reply(std::string_view line) {
     if (line.empty())
         return tl::unexpected { "empty line" };
 
-    line = line.substr(line.find_first_not_of("\r\n"));
+    // line = line.substr(line.find_first_not_of("\r\n"));
 
     if (line.starts_with("OK")) {
         return Okay {};

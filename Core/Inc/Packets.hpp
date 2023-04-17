@@ -46,15 +46,38 @@ inline constexpr auto _libstf_adl_introspector(DiagnosticPacket&&) {
 }
 
 struct FullPacket {
+    // BMS
     float battery_voltages[27];
     float battery_temps[5];
+    float spent_mah;
+    float spent_mwh;
+    float current;
+    float soc_percent;
 
+    // Fuel cell (hydro only)
+    float hydro_current;
+    float hydro_ppm;
+    float hydro_temp;
+
+    // VCS
+    float temperature_smps;
+    float temperature_engine_driver;
+    float vc_engine_driver[2];
+    float vc_telemetry[2];
+    float vc_smps[2];
+    float vc_bms[2];
+
+    // Engine
+    float rpm;
     float speed;
-    float remaining_wh;
+    float vc_engine[2];
 
+    // Local
     float longitude;
     float latitude;
+    float gyro[3];
 
+    // Diagnostic
     uint32_t queue_fill_amt;
     uint32_t tick_counter;
     uint32_t free_heap_space;
@@ -64,13 +87,38 @@ struct FullPacket {
 };
 
 inline constexpr auto _libstf_adl_introspector(FullPacket&&) {
-    auto accessor = Stf::Intro::StructBuilder<FullPacket> {} //
+    auto accessor = Stf::Intro::StructBuilder<FullPacket> {} // BMS
                       .add_simple<&FullPacket::battery_voltages, "v">()
                       .add_simple<&FullPacket::battery_temps, "temps">()
+                      .add_simple<&FullPacket::spent_mah, "mah">()
+                      .add_simple<&FullPacket::spent_mwh, "mwh">()
+                      .add_simple<&FullPacket::current, "amps">()
+                      .add_simple<&FullPacket::soc_percent, "soc">()
+
+                      // Fuel cell (hydro only)
+                      .add_simple<&FullPacket::hydro_current, "hc">()
+                      .add_simple<&FullPacket::hydro_ppm, "hd">()
+                      .add_simple<&FullPacket::hydro_temp, "ht">()
+
+                      // VCS
+                      .add_simple<&FullPacket::temperature_smps, "ts">()
+                      .add_simple<&FullPacket::temperature_engine_driver, "ted">()
+                      .add_simple<&FullPacket::vc_engine_driver, "vced">()
+                      .add_simple<&FullPacket::vc_telemetry, "vct">()
+                      .add_simple<&FullPacket::vc_smps, "vcs">()
+                      .add_simple<&FullPacket::vc_bms, "vcb">()
+
+                      // Engine
+                      .add_simple<&FullPacket::rpm, "rpm">()
                       .add_simple<&FullPacket::speed, "spd">()
-                      .add_simple<&FullPacket::remaining_wh, "wh">()
-                      .add_simple<&FullPacket::longitude, "lon">()
+                      .add_simple<&FullPacket::vc_engine, "vce">()
+
+                      // Local
+                      .add_simple<&FullPacket::longitude, "long">()
                       .add_simple<&FullPacket::latitude, "lat">()
+                      .add_simple<&FullPacket::gyro, "gyro">()
+
+                      // Diagnostic
                       .add_simple<&FullPacket::queue_fill_amt, "q">()
                       .add_simple<&FullPacket::tick_counter, "tc">()
                       .add_simple<&FullPacket::free_heap_space, "heap">()

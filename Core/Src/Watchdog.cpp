@@ -9,7 +9,7 @@
 
 namespace Tele {
 
-void terminate_handler() { halt_and_catch_fire(HCF_ERROR_HANDLER, "std::terminate"); }
+void terminate_handler() { halt_and_catch_fire(HCF_STD_TERMINATE, "std::terminate"); }
 
 static GPIO_TypeDef* k_led_port = GPIOD;
 static constexpr uint16_t k_led_pin_orange = LD3_Pin;
@@ -17,23 +17,25 @@ static constexpr uint16_t k_led_pin_green = LD4_Pin;
 static constexpr uint16_t k_led_pin_red = LD5_Pin;
 static constexpr uint16_t k_led_pin_blue = LD6_Pin;
 
-[[gnu::section(".ccmram")]] volatile InterRebootData g_inter_reboot_data;
+[[gnu::section(".ccmram")]] InterRebootData g_inter_reboot_data;
 
-uint32_t InterRebootData::self_check() volatile {
+uint32_t InterRebootData::self_check() {
     uint32_t old_sum = crc_sum;
     crc_sum = 0;
 
     using desc_type = Stf::CRCDescriptions::CRC32ISOHDLC;
     Stf::CRCState<desc_type, false> crc_state {};
     for (size_t i = 0; i < sizeof(InterRebootData); i++) {
-        crc_state.update(reinterpret_cast<volatile uint8_t*>(this)[i]);
+        uint8_t b = __atomic_load_n(reinterpret_cast<uint8_t*>(this) + i, __ATOMIC_ACQUIRE);
+
+        crc_state.update(b);
     }
 
     crc_sum = old_sum;
     return crc_state.finished_value();
 }
 
-bool InterRebootData::initialize_if_needed() volatile {
+bool InterRebootData::initialize_if_needed() {
     if (self_check() == crc_sum)
         return false;
 
@@ -43,7 +45,7 @@ bool InterRebootData::initialize_if_needed() volatile {
     return true;
 }
 
-void InterRebootData::catched_fire(uint32_t status, const char* who) volatile {
+void InterRebootData::catched_fire(uint32_t status, const char* who) {
     hcf_status = status;
 
     // we don't trust that is non-null
@@ -58,14 +60,15 @@ void InterRebootData::catched_fire(uint32_t status, const char* who) volatile {
     std::copy_n(who, hcf_task_name_sz, hcf_task_name);*/
 
     for (size_t i = 0; i < hcf_task_name_sz; i++) {
-        hcf_task_name[i] = who[i];
+        // volatile-esque
+        __atomic_store_n(hcf_task_name + i, who[i], __ATOMIC_RELEASE);
     }
 
     for (size_t i = hcf_task_name_sz; i < configMAX_TASK_NAME_LEN; i++) {
-        hcf_task_name[i] = 0;
+        __atomic_store_n(hcf_task_name + i, '\0', __ATOMIC_RELEASE);
     }
 
-    crc_sum = self_check();
+    __atomic_store_n(&crc_sum, self_check(), __ATOMIC_RELEASE);
 }
 
 enum class WarningStatus : int {
@@ -159,9 +162,7 @@ void DiagnosticWatchdogTask::process_task_info(TaskStatus_t const& task) {
 }
 
 extern "C" __attribute((noreturn)) void halt_and_catch_fire(uint32_t code, const char* who) {
-#ifndef NDEBUG
-    asm volatile("bkpt");
-#endif
+    Tele::breakpoint();
 
     __disable_irq();
 
@@ -182,6 +183,10 @@ extern "C" void cpp_assert_failed(const char* file, uint32_t line) {
         return;
 
     // Log::error("assertion failed at {}:{}", file, line);
+}
+
+extern "C" void assert_failed_strong(uint8_t *file, uint32_t line) {
+    halt_and_catch_fire(HCF_ASSERT_FAILURE, "");
 }
 
 extern "C" void vApplicationMallocFailedHook() { //

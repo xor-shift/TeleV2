@@ -18,12 +18,15 @@ extern RNG_HandleTypeDef hrng;
 extern SPI_HandleTypeDef hspi1;
 extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
+extern UART_HandleTypeDef huart6;
+extern CAN_HandleTypeDef hcan1;
 }
 
 namespace Tele {
 
-static UART_HandleTypeDef& huart_gsm = huart2;
-static UART_HandleTypeDef& huart_ftdi = huart3;
+static UART_HandleTypeDef& s_gsm_uart = huart2;
+static UART_HandleTypeDef& s_gps_uart = huart3;
+static UART_HandleTypeDef& s_nextion_uart = huart6;
 
 extern P256::PrivateKey g_privkey;
 

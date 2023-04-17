@@ -8,7 +8,7 @@
 #include <fmt/core.h>
 #include <tl/expected.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
 
 enum class CFUNType : int {
     Minimum = 0,
@@ -126,9 +126,9 @@ struct HTTPRead;
 struct HTTPData;
 
 using command_type = std::variant<
-  AT, SetBaud, SetErrorVerbosity, SaveToNVRAM, Echo, CFUN, SetBearerParameter, QueryBearerParameters, OpenBearer, CloseBearer, AttachToGPRS,
-  QueryGPRS, DetachFromGPRS, QueryPositionAndTime, HTTPInit, HTTPTerm, HTTPSetBearer, HTTPSetURL, HTTPSetUA,
-  HTTPMakeRequest, HTTPRead, HTTPContentType, HTTPData>;
+  AT, SetBaud, SetErrorVerbosity, SaveToNVRAM, Echo, CFUN, SetBearerParameter, QueryBearerParameters, OpenBearer,
+  CloseBearer, AttachToGPRS, QueryGPRS, DetachFromGPRS, QueryPositionAndTime, HTTPInit, HTTPTerm, HTTPSetBearer,
+  HTTPSetURL, HTTPSetUA, HTTPMakeRequest, HTTPRead, HTTPContentType, HTTPData>;
 
 };
 
@@ -260,12 +260,16 @@ namespace Command {
 
 struct AT {
     inline static constexpr const char* name = "AT";
+
+    static std::string_view format() { return "AT"; }
 };
 
 struct SetErrorVerbosity {
     inline static constexpr const char* name = "CMEE";
 
     ErrorVerbosity verbosity = ErrorVerbosity::DisableMEE;
+
+    static std::string format() { return "AT"; }
 };
 
 struct SaveToNVRAM {
@@ -399,34 +403,31 @@ struct HTTPData {
         }                                                                                                      \
     }
 
-FORMATTER_FACTORY(GSM::Command::CFUN, "AT+CFUN={}{}", static_cast<int>(v.fun_type), v.reset_before ? ",1" : "");
-FORMATTER_FACTORY(GSM::Command::AT, "AT");
-FORMATTER_FACTORY(GSM::Command::SetBaud, "AT+IPR={}", static_cast<int>(v.baud_rate));
-FORMATTER_FACTORY(GSM::Command::SaveToNVRAM, "AT&W");
-FORMATTER_FACTORY(GSM::Command::SetErrorVerbosity, "AT+CMEE={}", static_cast<int>(v.verbosity));
-FORMATTER_FACTORY(GSM::Command::Echo, "ATE{}", v.on ? "1" : "0");
-FORMATTER_FACTORY(
-  GSM::Command::SetBearerParameter, "AT+SAPBR=3,{},\"{}\",\"{}\"", static_cast<int>(v.profile), v.tag, v.value
-);
-FORMATTER_FACTORY(GSM::Command::QueryBearerParameters, "AT+SAPBR=2,{}", static_cast<int>(v.profile));
-FORMATTER_FACTORY(GSM::Command::OpenBearer, "AT+SAPBR=1,{}", static_cast<int>(v.profile));
-FORMATTER_FACTORY(GSM::Command::CloseBearer, "AT+SAPBR=0,{}", static_cast<int>(v.profile));
-FORMATTER_FACTORY(GSM::Command::AttachToGPRS, "AT+CGATT=1");
-FORMATTER_FACTORY(GSM::Command::QueryGPRS, "AT+CGATT?");
-FORMATTER_FACTORY(GSM::Command::DetachFromGPRS, "AT+CGATT=0");
-FORMATTER_FACTORY(GSM::Command::QueryPositionAndTime, "AT+CIPGSMLOC=1,{}", static_cast<int>(v.profile));
+// clang-format off
+FORMATTER_FACTORY(Tele::GSM::Command::CFUN, "AT+CFUN={}{}", static_cast<int>(v.fun_type), v.reset_before ? ",1" : "");
+FORMATTER_FACTORY(Tele::GSM::Command::AT, "AT");
+FORMATTER_FACTORY(Tele::GSM::Command::SetBaud, "AT+IPR={}", static_cast<int>(v.baud_rate));
+FORMATTER_FACTORY(Tele::GSM::Command::SaveToNVRAM, "AT&W");
+FORMATTER_FACTORY(Tele::GSM::Command::SetErrorVerbosity, "AT+CMEE={}", static_cast<int>(v.verbosity));
+FORMATTER_FACTORY(Tele::GSM::Command::Echo, "ATE{}", v.on ? "1" : "0");
+FORMATTER_FACTORY(Tele::GSM::Command::SetBearerParameter, "AT+SAPBR=3,{},\"{}\",\"{}\"", static_cast<int>(v.profile), v.tag, v.value);
+FORMATTER_FACTORY(Tele::GSM::Command::QueryBearerParameters, "AT+SAPBR=2,{}", static_cast<int>(v.profile));
+FORMATTER_FACTORY(Tele::GSM::Command::OpenBearer, "AT+SAPBR=1,{}", static_cast<int>(v.profile));
+FORMATTER_FACTORY(Tele::GSM::Command::CloseBearer, "AT+SAPBR=0,{}", static_cast<int>(v.profile));
+FORMATTER_FACTORY(Tele::GSM::Command::AttachToGPRS, "AT+CGATT=1");
+FORMATTER_FACTORY(Tele::GSM::Command::QueryGPRS, "AT+CGATT?");
+FORMATTER_FACTORY(Tele::GSM::Command::DetachFromGPRS, "AT+CGATT=0");
+FORMATTER_FACTORY(Tele::GSM::Command::QueryPositionAndTime, "AT+CIPGSMLOC=1,{}", static_cast<int>(v.profile));
 
-FORMATTER_FACTORY(GSM::Command::HTTPInit, "AT+HTTPINIT");
-FORMATTER_FACTORY(GSM::Command::HTTPTerm, "AT+HTTPTERM");
-FORMATTER_FACTORY(GSM::Command::HTTPSetBearer, "AT+HTTPPARA=\"CID\",{}", static_cast<int>(v.profile));
-FORMATTER_FACTORY(GSM::Command::HTTPSetURL, "AT+HTTPPARA=\"URL\",\"{}\"", v.url);
-FORMATTER_FACTORY(GSM::Command::HTTPSetUA, "AT+HTTPPARA=\"UA\",\"{}\"", v.user_agent);
-FORMATTER_FACTORY(GSM::Command::HTTPContentType, "AT+HTTPPARA=\"CONTENT\",\"{}\"", v.content_type);
-FORMATTER_FACTORY(GSM::Command::HTTPMakeRequest, "AT+HTTPACTION={}", static_cast<int>(v.request_type));
-FORMATTER_FACTORY(GSM::Command::HTTPRead, "AT+HTTPREAD");
-FORMATTER_FACTORY(
-  GSM::Command::HTTPData, "AT+HTTPDATA={},{}", v.data.size(),
-  std::max(1000uz, std::min(120000uz, v.data.size() * 10 / 9600))
-);
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPInit, "AT+HTTPINIT");
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPTerm, "AT+HTTPTERM");
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPSetBearer, "AT+HTTPPARA=\"CID\",{}", static_cast<int>(v.profile));
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPSetURL, "AT+HTTPPARA=\"URL\",\"{}\"", v.url);
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPSetUA, "AT+HTTPPARA=\"UA\",\"{}\"", v.user_agent);
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPContentType, "AT+HTTPPARA=\"CONTENT\",\"{}\"", v.content_type);
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPMakeRequest, "AT+HTTPACTION={}", static_cast<int>(v.request_type));
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPRead, "AT+HTTPREAD");
+FORMATTER_FACTORY(Tele::GSM::Command::HTTPData, "AT+HTTPDATA={},{}", v.data.size(), std::max(1000uz, std::min(120000uz, v.data.size() * 10 / 9600)));
+// clang-format on
 
 #undef FORMATTER_FACTORY

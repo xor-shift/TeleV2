@@ -1,6 +1,6 @@
 #include <Tele/GSMModules/Timer.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
 
 [[noreturn]] void TimerModule::operator()() {
     for (;;) {

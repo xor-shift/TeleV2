@@ -4,7 +4,7 @@
 
 #include <Tele/Log.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
 
 void LoggerModule::registered(GSM::Coordinator* coordinator) {
     Module::registered(coordinator);

@@ -2,12 +2,14 @@
 
 #include <list>
 
+#include <Stuff/Util/Visitor.hpp>
+
 #include <Tele/Delimited.hpp>
 #include <Tele/Format.hpp>
 #include <Tele/Log.hpp>
 #include <Tele/STUtilities.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
 
 void Coordinator::begin_rx() {
     for (;;) {
@@ -18,7 +20,21 @@ void Coordinator::begin_rx() {
     }
 }
 
-void Coordinator::isr_rx_event(uint16_t start_idx, uint16_t end_idx) {
+void Coordinator::isr_rx_event(UART_HandleTypeDef* huart, uint16_t offset) {
+    if (huart != &m_huart)
+        return;
+
+    if (m_uart_rx_offset == offset)
+        return;
+
+    if (m_uart_rx_offset > offset)
+        m_uart_rx_offset = 0;
+
+    uint16_t start_idx = m_uart_rx_offset;
+    uint16_t end_idx = offset;
+
+    m_uart_rx_offset = offset;
+
     std::span<uint8_t> rx_buffer { m_uart_rx_buffer };
     rx_buffer = rx_buffer.subspan(start_idx, end_idx - start_idx);
 
@@ -38,15 +54,6 @@ void Coordinator::isr_rx_event(uint16_t start_idx, uint16_t end_idx) {
     });
 }
 
-void Coordinator::create(const char* name) {
-    m_queue_handle = xQueueCreateStatic(k_queue_size, sizeof(queue_elem_type), data(m_queue_storage), &m_static_queue);
-
-    if (m_queue_handle == nullptr)
-        throw std::runtime_error("m_queue_handle is null??");
-
-    StaticTask::create(name);
-}
-
 size_t Coordinator::register_module(Module* module) {
     module->registered(this);
     size_t ret = m_registered_modules.size();
@@ -54,31 +61,8 @@ size_t Coordinator::register_module(Module* module) {
     return ret;
 }
 
-uint32_t Coordinator::send_command(Module* who, Command::command_type&& command, bool in_isr) {
-    uint32_t order = next_command_order++;
-
-    CommandElement cmd_elem {
-        .order = order,
-        .who = who,
-        .command = command,
-    };
-
-    queue_elem_type elem = cmd_elem;
-
-    if (in_isr) {
-        BaseType_t higher_prio_task_awoken = pdFALSE;
-        xQueueSendFromISR(m_queue_handle, &elem, &higher_prio_task_awoken);
-        portYIELD_FROM_ISR(higher_prio_task_awoken);
-    } else {
-        xQueueSend(m_queue_handle, &elem, portMAX_DELAY);
-    }
-
-    return order;
-}
-
 std::vector<Reply::reply_type> Coordinator::send_command_async(Module* who, Command::command_type&& command) {
     std::vector<Reply::reply_type> container {};
-    uint32_t order = next_command_order++;
 
     // "The semaphore is created in the 'empty' state"
     // https://www.freertos.org/xSemaphoreCreateBinary.html
@@ -86,7 +70,6 @@ std::vector<Reply::reply_type> Coordinator::send_command_async(Module* who, Comm
     SemaphoreHandle_t sema = xSemaphoreCreateBinary();
 
     queue_elem_type elem = CommandElement {
-        .order = order,
         .who = who,
 
         .reply_container = &container,
@@ -114,13 +97,7 @@ void Coordinator::send_command_now(Command::command_type const& command) {
           Log::debug("sending a \"{}\" command", cmd.name);
 
           auto str = fmt::format("{}\r\n", cmd);
-          StreamBufferHandle_t& handle = m_transmit_task.stream();
-          // Log::debug("sending line: {}", str);
-
-          Tele::in_chunks(std::span(begin(str), end(str)), 16, [&handle](std::span<const char> chunk) {
-              size_t sent = xStreamBufferSend(handle, data(chunk), size(chunk), portMAX_DELAY);
-              return sent;
-          });
+          m_transmit_task.transmit(std::span(begin(str), end(str)));
       },
       command
     );
@@ -141,7 +118,7 @@ void Coordinator::fullfill_command(CommandElement&& cmd, std::span<Reply::reply_
     if (cmd.sema != nullptr) {
         cmd.reply_container->reserve(replies.size());
         copy(begin(replies), end(replies), back_inserter(*cmd.reply_container));
-        if (xSemaphoreGive(cmd.sema) != pdTRUE) {
+        if (BaseType_t res = xSemaphoreGive(cmd.sema); res != pdTRUE) {
             throw std::runtime_error("xSemaphoreGive failed");
         }
     }
@@ -175,17 +152,38 @@ struct CoordinatorQueueHelper {
         }
     }
 
-    void new_reply(Reply::reply_type&& reply) {
-        snoop(reply);
+    void update_state(Reply::reply_type const& reply) {
+        auto new_boot_msg = [this](std::atomic_bool& target) {
+            if (target) {
+                coordinator.m_state_inconsistent = true;
+            }
 
-        // unexpected restart, fail all waiting commands
-        if (active_command && std::holds_alternative<Reply::Ready>(reply)) {
+            target = true;
+        };
+
+        Stf::MultiVisitor visitor {
+            [&](Reply::Ready const&) { new_boot_msg(coordinator.m_ready); },
+            [&](Reply::CFUN const&) { new_boot_msg(coordinator.m_functional); },
+            [&](Reply::CPIN const&) { new_boot_msg(coordinator.m_have_sim); },
+            [&](Reply::SMSReady const&) { new_boot_msg(coordinator.m_sms_ready); },
+            [&](Reply::CallReady const&) { new_boot_msg(coordinator.m_call_ready); },
+            [](auto) {},
+        };
+
+        std::visit(visitor, reply);
+    }
+
+    void new_reply(Reply::reply_type&& reply) {
+        update_state(reply);
+
+        if (coordinator.device_inconsistent_state()) {
             Log::error(
-              "received a RDY message with {} active command and {} queued commands", active_command ? "an" : "no",
+              "entered inconsistent state with {} active command and {} queued commands", active_command ? "an" : "no",
               command_queue.size()
             );
 
-            coordinator.fullfill_command(std::move(*active_command), reply_buffer);
+            if (active_command.has_value())
+                coordinator.fullfill_command(std::move(*active_command), reply_buffer);
 
             active_command = std::nullopt;
             reply_buffer.clear();
@@ -196,8 +194,12 @@ struct CoordinatorQueueHelper {
                 command_queue.pop_front();
             }
 
+            coordinator.reset_state();
+
             return;
         }
+
+        snoop(reply);
 
         bool solicited = is_solicited(reply);
         bool finish_buffer = std::holds_alternative<Reply::Okay>(reply) || std::holds_alternative<Reply::Error>(reply);
@@ -206,11 +208,7 @@ struct CoordinatorQueueHelper {
             Command::HTTPData& http_data = std::get<Command::HTTPData>(active_command->command);
             Log::debug("since the active command is HTTPDATA, sending additional data...");
 
-            StreamBufferHandle_t& handle = coordinator.m_transmit_task.stream();
-            Tele::in_chunks(http_data.data, 16, [&handle](std::span<const char> chunk) {
-                size_t sent = xStreamBufferSend(handle, data(chunk), size(chunk), portMAX_DELAY);
-                return sent;
-            });
+            coordinator.m_transmit_task.transmit(http_data.data);
         }
 
         if (!solicited) {

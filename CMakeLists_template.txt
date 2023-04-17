@@ -100,13 +100,18 @@ add_library(Tele
         Tele/Src/GSMModules/Logger.cpp
         Tele/Src/GSMModules/Timer.cpp
 
+        Tele/Src/CANTask.cpp
+        Tele/Src/GPSTask.cpp
         Tele/Src/GSMCommands.cpp
         Tele/Src/GSMCoordinator.cpp
         Tele/Src/GyroTask.cpp
         Tele/Src/LIS3DSH.cpp
         Tele/Src/Log.cpp
+        Tele/Src/NMEA.cpp
         Tele/Src/Parsers.cpp
-        Tele/Src/STUtilities.cpp)
+        Tele/Src/STUtilities.cpp
+        Tele/Src/UARTTasks.cpp
+        )
 
 target_include_directories(Tele PUBLIC Tele/Inc $${STM_INC_DIRS})
 target_link_libraries(Tele fmt::fmt scn::scn libstuff)

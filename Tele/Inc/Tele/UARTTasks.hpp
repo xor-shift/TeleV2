@@ -1,83 +1,105 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <span>
 #include <string_view>
 
+#include <cmsis_os.h>
+#include <queue.h>
 #include <stm32f4xx_hal.h>
 #include <stm32f4xx_hal_uart.h>
-#include <cmsis_os.h>
 #include <stream_buffer.h>
 
-#include <Tele/StaticTask.hpp>
+#include <fmt/format.h>
+
+#include <Tele/Delimited.hpp>
 #include <Tele/STUtilities.hpp>
+#include <Tele/StaticTask.hpp>
 
-template<typename Callback> struct ReceiveTask : Tele::StaticTask<1024> {
-    constexpr ReceiveTask(UART_HandleTypeDef& huart, Callback&& cb = {}) noexcept
-        : m_huart(huart)
-        , m_callback(std::move(cb)) { }
+namespace Tele {
 
-    void create(const char* name) override {
-        size_t sz = m_buffer_storage.size();
-        m_stream = xStreamBufferCreateStatic(sz, 1, m_buffer_storage.data(), &m_buffer);
-        StaticTask::create(name);
-    }
+struct TxDelimitedRxTask : Task<1024, false> {
+private:
+    struct UARTQueueElement {
+        inline static constexpr size_t chunk_size = 16;
 
-    void begin_rx() {
-        for (;;) {
-            HAL_StatusTypeDef res
-              = HAL_UARTEx_ReceiveToIdle_DMA(&m_huart, m_uart_rx_buffer.data(), m_uart_rx_buffer.size());
-            if (res == HAL_OK)
-                break;
+        char data[chunk_size];
+        uint16_t sz_rx;
+
+        constexpr bool is_rx() const { return (sz_rx & 1) != 0; }
+        constexpr uint16_t data_sz() const { return sz_rx >> 1; }
+
+        constexpr void set_sz_rx(uint16_t sz, bool rx) {
+            sz_rx = sz << 1;
+            if (rx)
+                sz_rx |= 1;
         }
-    }
+    };
 
-    void isr_rx_event(uint16_t start_idx, uint16_t end_idx) {
-        std::span<uint8_t> rx_buffer { m_uart_rx_buffer };
-        rx_buffer = rx_buffer.subspan(start_idx, end_idx - start_idx);
+    using LineQueueElement = std::string*;
 
-        Tele::in_chunks<uint8_t>(rx_buffer, m_buffer_storage.size() / 2, [this](std::span<uint8_t> chunk) {
-            BaseType_t higher_prio_task_awoken = pdFALSE;
-            size_t res = xStreamBufferSendFromISR(m_stream, chunk.data(), chunk.size(), &higher_prio_task_awoken);
-            portYIELD_FROM_ISR(higher_prio_task_awoken);
-            return res;
-        });
-    }
+public:
+    TxDelimitedRxTask(
+      std::string_view task_name_base, UART_HandleTypeDef& uart_handle, size_t line_buffer_size,
+      std::string_view delimiter
+    );
+
+    ~TxDelimitedRxTask();
+
+    void create(const char* name) override;
+
+    void transmit(std::span<const char> data);
+
+    /// @return
+    /// The string received from the queue, if any. If the value equals nullptr, the queue was empty.
+    /// @remarks
+    /// The string returned from this function must be freed (call delete[] on ret->data())
+    std::string* receive_line_now();
+
+    /// @return
+    /// The string received from the queue. The pointer will never equal nullptr.
+    /// @remarks
+    /// The string returned from this function must be freed (call delete[] on ret->data())
+    std::string* receive_line();
+
+    void begin_rx();
+
+    void isr_rx_event(UART_HandleTypeDef* huart, uint16_t offset);
 
 protected:
-    [[noreturn]] void operator()() override {
-        std::array<char, 32> staging_bytes;
-
-        for (;;) {
-            void* rx_buf_ptr = reinterpret_cast<void*>(staging_bytes.data());
-            size_t amt_read = xStreamBufferReceive(m_stream, rx_buf_ptr, staging_bytes.size(), portMAX_DELAY);
-            std::invoke(m_callback, std::string_view(staging_bytes.data(), amt_read));
-        }
-    }
+    [[noreturn]] void operator()() override;
 
 private:
-    UART_HandleTypeDef& m_huart;
-    Callback m_callback;
+    std::string m_task_name;
 
-    std::array<uint8_t, 64> m_uart_rx_buffer;
+    UART_HandleTypeDef& m_uart_handle;
+    std::string_view m_delimiter;
+    size_t m_line_buffer_size;
+    char* m_line_buffer;
 
-    std::array<uint8_t, 32> m_buffer_storage;
-    StaticStreamBuffer_t m_buffer;
-    StreamBufferHandle_t m_stream;
+    std::array<uint8_t, UARTQueueElement::chunk_size> m_uart_tx_buffer;
+
+    uint16_t m_last_uart_offset = 0;
+    std::array<uint8_t, UARTQueueElement::chunk_size * 2> m_uart_rx_buffer;
+
+    QueueHandle_t m_uart_queue;
+    QueueHandle_t m_line_queue;
 };
 
-struct TransmitTask : Tele::StaticTask<128> {
-    constexpr TransmitTask(UART_HandleTypeDef& huart) noexcept
-        : m_huart(huart) { }
-
-    void create(const char* name) override {
+struct TransmitTask : Task<128, false> {
+    TransmitTask(UART_HandleTypeDef& huart) noexcept
+        : m_huart(huart) {
         size_t sz = m_buffer_storage.size();
         m_stream = xStreamBufferCreateStatic(sz, 1, m_buffer_storage.data(), &m_buffer);
-
-        StaticTask::create(name);
     }
 
-    constexpr StreamBufferHandle_t& stream() { return m_stream; }
+    size_t transmit(std::span<const char> data) {
+        return Tele::in_chunks(data, 16, [this](std::span<const char> chunk) {
+            size_t sent = xStreamBufferSend(m_stream, chunk.data(), chunk.size(), portMAX_DELAY);
+            return sent;
+        });
+    }
 
 protected:
     [[noreturn]] void operator()() override {
@@ -88,10 +110,6 @@ protected:
                 while (pending_size == 0) {
                     pending_size
                       = xStreamBufferReceive(m_stream, m_uart_buffer.data(), m_uart_buffer.size(), portMAX_DELAY);
-                }
-
-                if (m_uart_buffer[0] == 'A' && m_uart_buffer[1] == '1') {
-                    std::ignore = std::ignore;
                 }
 
                 while (HAL_UART_Transmit_DMA(&m_huart, m_uart_buffer.data(), pending_size) != HAL_OK) {
@@ -114,9 +132,11 @@ protected:
 private:
     UART_HandleTypeDef& m_huart;
 
-    std::array<uint8_t, 64> m_uart_buffer;
+    std::array<uint8_t, 32> m_uart_buffer;
 
-    std::array<uint8_t, 64> m_buffer_storage;
+    std::array<uint8_t, 32> m_buffer_storage;
     StaticStreamBuffer_t m_buffer;
     StreamBufferHandle_t m_stream;
 };
+
+}

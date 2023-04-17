@@ -50,6 +50,37 @@ void init_globals() {
 
     HAL_RNG_Init(&hrng);
     HAL_CRC_Init(&hcrc);
+
+    CAN_FilterTypeDef filter = {
+        .FilterIdHigh = 0,
+        .FilterIdLow = 0,
+        .FilterMaskIdHigh = 0,
+        .FilterMaskIdLow = 0,
+        .FilterFIFOAssignment = CAN_RX_FIFO0,
+        .FilterBank = 0,
+        .FilterMode = CAN_FILTERMODE_IDMASK,
+        .FilterScale = CAN_FILTERSCALE_32BIT,
+        .FilterActivation = ENABLE,
+        .SlaveStartFilterBank = 14,
+    };
+
+    if (HAL_CAN_ConfigFilter(&hcan1, &filter) != HAL_OK) {
+        Error_Handler();
+    }
+
+    /*if (fifo) {
+        filter.FilterFIFOAssignment = *fifo;
+        if (HAL_CAN_ConfigFilter(&hcan1, &filter) != HAL_OK)
+            Error_Handler();
+    }*/
+
+    if (HAL_CAN_Start(&hcan1) != HAL_OK) {
+        Error_Handler();
+    }
+
+    /*if (fifo && HAL_CAN_ActivateNotification(&hcan1, *fifo) != HAL_OK) {
+        Error_Handler();
+    }*/
 }
 
 void run_benchmarks() { Tele::p256_test(g_privkey); }

@@ -56,7 +56,7 @@ void TerminalTask::create(const char* name) {
         throw std::runtime_error("m_stream_buffer_handle is null");;
     }
 
-    StaticTask::create(name);
+    Task::create(name);
 }
 
 void TerminalTask::isr_new_chars(std::string_view str) {
@@ -109,7 +109,7 @@ void TerminalTask::operator()() {
         return true;
     };
 
-    auto set_cursor = [this, &push_num](size_t i, size_t j) {
+    auto set_cursor = [this](size_t i, size_t j) {
         std::array<char, 4 + 2 * 4> buffer;
         auto res = fmt::format_to_n(data(buffer), buffer.size(), "\033[{};{}f", i, j);
         raw_send({ data(buffer), res.out });

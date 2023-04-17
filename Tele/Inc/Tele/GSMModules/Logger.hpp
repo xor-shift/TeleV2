@@ -2,7 +2,7 @@
 
 #include <Tele/GSMCoordinator.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
 
 struct LoggerModule final : Module {
     virtual ~LoggerModule() override = default;

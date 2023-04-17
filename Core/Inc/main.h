@@ -63,6 +63,8 @@ void Error_Handler(void);
 #define HCF_RTOS_STACK_OVERFLOW 6u
 #define HCF_WDT_STACK_OVERFLOW 7u
 #define HCF_ERROR_HANDLER 8u
+#define HCF_STD_TERMINATE 9u
+#define HCF_ASSERT_FAILURE 10u
 
 __attribute((noreturn)) void halt_and_catch_fire(uint32_t, const char*);
 void cpp_init();

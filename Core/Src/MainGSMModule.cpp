@@ -10,42 +10,74 @@
 
 #include <Globals.hpp>
 #include <Packets.hpp>
+#include <main.h>
 #include <secrets.hpp>
 #include <stdcompat.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
+
+struct CustomGyroTask : Tele::GyroTask {
+    CustomGyroTask(MainModule& module, SPI_HandleTypeDef& spi, GPIO_TypeDef* cs_port, uint16_t cs_pin)
+        : GyroTask(spi, cs_port, cs_pin)
+        , m_module(module) { }
+
+protected:
+    virtual void raw_callback(Stf::Vector<uint16_t, 3> raw) { m_module.isr_gyro_new(raw); }
+
+private:
+    MainModule& m_module;
+};
+
+MainModule::MainModule(PacketForgerTask& packet_forger)
+    : m_gyro_task(std::make_unique<CustomGyroTask>(std::ref(*this), hspi1, CS_I2C_SPI_GPIO_Port, CS_I2C_SPI_Pin))
+    , m_packet_forger(packet_forger) { }
+
+void MainModule::isr_gyro_notify() { m_gyro_task->isr_notify(); }
+
+void MainModule::isr_gyro_new(Stf::Vector<uint16_t, 3> raw) { }
 
 void MainModule::create(const char* name) {
-    m_packet_forger.create("packet forger");
-    StaticTask::create(name);
+    m_gyro_task->create("gryo");
+    Task::create(name);
 }
 
+/*void MainModule::reset_state() {
+    m_ready = false;
+    m_functional = false;
+    m_have_sim = false;
+    m_call_ready = false;
+    m_sms_ready = false;
+    m_state_inconsistent = false;
+}*/
+
 bool MainModule::initialize_device() {
-    bool was_open = false;
-    for (size_t i = 0; !m_ready; i++) {
-        vTaskDelay(100);
-        if (i >= 50) {
-            was_open = true;
-            break;
-        }
-    }
-
-    Log::info("the module was{} open", was_open ? "" : "n't");
-
     /*std::ignore = m_coordinator->send_command_async(this, Command::AT {});
     std::ignore = m_coordinator->send_command_async(this, Command::Echo { false });
     std::ignore = m_coordinator->send_command_async(this, Command::SetErrorVerbosity { ErrorVerbosity::MEEString });
     std::ignore = m_coordinator->send_command_async(this, Command::SetBaud { BaudRate::BPS460k8 });
-    std::ignore = m_coordinator->send_command_async(this, Command::SaveToNVRAM { });*/
+    std::ignore = m_coordinator->send_command_async(this, Command::SaveToNVRAM { });
 
-    if (was_open) {
-        // it might have *just* opened, wait for it to finish booting
-        vTaskDelay(2000);
+    for (;;) {
+        portYIELD();
+    }*/
 
-        std::ignore = m_coordinator->send_command_async(this, Command::CFUN { CFUNType::Full, true });
-    }
+    /*
+     * I am tired of dealing with the shenanigans of this device, regardless of
+     * the card and the module booting at the same time, we are going to
+     * restart the device.
+     *
+     * Delay to let it boot enough to accept AT commands.
+     * I pray that this is deterministic...
+     * TODO: add command timeouts (new forged reply to signal timeouts?)
+     */
+    vTaskDelay(2000);
 
-    for (size_t i = 0; !m_sms_ready || !m_call_ready; i++) {
+    std::ignore = m_coordinator->send_command_async(this, Command::CFUN { CFUNType::Full, true });
+    // reset_state();
+
+    m_coordinator->reset_state();
+
+    for (size_t i = 0; !m_coordinator->device_sms_ready() || !m_coordinator->device_call_ready(); i++) {
         vTaskDelay(100);
         if (i >= 150) // 15 secs
             return false;
@@ -150,32 +182,9 @@ int MainModule::packet_loop() {
     // clang-format on
 
     for (;;) {
-        /*auto res = http_request(
-          Tele::Config::Endpoints::packet_full, HTTPRequestType::POST, "text/plain", std::string_view { data_to_send }
-        );*/
+        vTaskDelay(500);
 
-        // clang-format off
-        /*Tele::FullPacket packet {};
-
-        std::string data_to_send = sequencer.sequence(std::move(packet));
-
-        Log::g_logger.set_severity(Log::Severity::Info);
-        Stf::ScopeExit logger_guard { [] { //
-            Log::g_logger.set_severity(Log::Severity::Trace);
-        } };
-
-        // clang-format off
-        TRY_OR_RET(2, extract_replies_from_range<Reply::HTTPReadyForData, Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPData { .data = { data_to_send } })));
-        TRY_OR_RET(2, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPMakeRequest { HTTPRequestType::POST })));
-        TRY_OR_RET(2, wait_for_http());
-        TRY_OR_RET(2, extract_replies_from_range<Reply::Okay>(m_coordinator->send_command_async(this, Command::HTTPRead { })));
-        // clang-format on
-         */
-        // clang-format on
-
-        vTaskDelay(3000);
-
-        std::array<Tele::Packet, 20> arr;
+        std::array<Tele::Packet, 10> arr;
         size_t pending_packet_count = m_packet_forger.get_pending_packets(arr);
         std::span<Tele::Packet> pending_packets { begin(arr), pending_packet_count };
 
@@ -222,20 +231,25 @@ int MainModule::main() {
 
     m_packet_forger.reset_sequencer(initial_vector);
 
-    for (size_t i = 0;; i++) {
-        // watch out for spurious RDY messages
-        reset_state();
+    auto reinitialize_device = [&] {
+        for (size_t i = 0;; i++) {
+            if (initialize_device())
+                break;
+            Log::warn("device initialization failed, retry count: {}", i);
+        }
+    };
 
+    for (size_t i = 0, j = 0;; i++, j++) {
         int res = packet_loop();
         Log::warn("packet loop exited with status {}, retry count: {}", res, i);
 
-        if (m_ready) {
-            Log::warn("spurious RDY detected, reinitializing device");
-            for (size_t j = 0;; j++) {
-                if (initialize_device())
-                    break;
-                Log::warn("device initialization failed, retry count: {}", j);
-            }
+        if (j >= 5) {
+            j = 0;
+            Log::warn("{} failures since last device restart, restarting it", j);
+            reinitialize_device();
+        } else if (m_coordinator->device_inconsistent_state()) {
+            Log::warn("inconsistent state, reinitializing device");
+            reinitialize_device();
         }
 
         vTaskDelay(500);
@@ -284,16 +298,6 @@ std::optional<std::vector<Reply::reply_type>> MainModule::http_request(
     return ret;
 }
 
-void MainModule::reset_state() {
-    m_ready = false;
-    m_functional = false;
-    m_have_sim = false;
-    m_call_ready = false;
-    m_sms_ready = false;
-    m_bearer_open = false;
-    m_gprs_open = false;
-}
-
 [[noreturn]] void MainModule::operator()() {
     if (m_coordinator == nullptr)
         Error_Handler();
@@ -301,7 +305,7 @@ void MainModule::reset_state() {
     static const TickType_t s_fail_wait = 2500;
 
     for (size_t retries = 0;; retries++) {
-        reset_state();
+        // reset_state();
         int res = main();
         Log::warn("the main procedure failed with code {}", res);
         Log::warn("waiting {} ticks before restarting for retry no #{}", s_fail_wait, retries + 1);
@@ -311,11 +315,6 @@ void MainModule::reset_state() {
 
 void MainModule::incoming_reply(GSM::Coordinator&, Reply::reply_type const& reply) {
     Stf::MultiVisitor visitor {
-        [this](Reply::Ready const&) { m_ready = true; },
-        [this](Reply::CFUN const&) { m_functional = true; },
-        [this](Reply::CPIN const&) { m_have_sim = true; },
-        [this](Reply::SMSReady const&) { m_sms_ready = true; },
-        [this](Reply::CallReady const&) { m_call_ready = true; },
         [this](Reply::HTTPResponseReady const& reply) {
             // FIXME: race
             // this function is called from another thread, we could be reading m_last_http_response while it is being

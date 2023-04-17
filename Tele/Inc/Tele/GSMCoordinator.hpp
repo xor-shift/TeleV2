@@ -1,8 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include <vector>
 #include <optional>
+#include <vector>
 
 #include <cmsis_os.h>
 #include <semphr.h>
@@ -10,7 +10,7 @@
 #include <Tele/GSMCommands.hpp>
 #include <Tele/UARTTasks.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
 
 struct Coordinator;
 
@@ -19,18 +19,19 @@ struct Module {
 
     virtual void registered(Coordinator* coordinator) { m_coordinator = coordinator; }
 
-    virtual void incoming_reply(Coordinator& coordinator, Reply::reply_type const& reply) = 0;
+    virtual void incoming_reply(Coordinator& coordinator, Reply::reply_type const& reply) { }
 
 protected:
     Coordinator* m_coordinator = nullptr;
 };
 
-struct Coordinator : Tele::StaticTask<4096> {
+struct Coordinator
+    : Module
+    , Tele::StaticTask<2048> {
     static constexpr size_t k_queue_size = 32;
     friend struct CoordinatorQueueHelper;
 
     struct CommandElement {
-        uint32_t order = 0;
         Module* who = nullptr;
 
         std::vector<Reply::reply_type>* reply_container = nullptr;
@@ -50,29 +51,45 @@ struct Coordinator : Tele::StaticTask<4096> {
 
     using queue_elem_type = std::variant<CommandElement, DataElement>;
 
-    constexpr Coordinator(UART_HandleTypeDef& huart, TransmitTask& transmit_task) noexcept
+    Coordinator(UART_HandleTypeDef& huart, TransmitTask& transmit_task)
         : m_huart(huart)
-        , m_transmit_task(transmit_task) { }
+        , m_transmit_task(transmit_task)
+        , m_queue_handle(
+            xQueueCreateStatic(k_queue_size, sizeof(queue_elem_type), data(m_queue_storage), &m_static_queue)
+          ) {
+
+        if (m_queue_handle == nullptr)
+            throw std::runtime_error("m_queue_handle is null??");
+    }
 
     Coordinator(Coordinator const&) = delete;
     Coordinator(Coordinator&) = delete;
 
     void begin_rx();
 
-    void isr_rx_event(uint16_t start_idx, uint16_t end_idx);
-
-    void create(const char* name) override;
+    void isr_rx_event(UART_HandleTypeDef* huart, uint16_t offset);
 
     size_t register_module(Module* module);
 
-    uint32_t send_command(Module* who, Command::command_type&& command, bool in_isr);
-
     std::vector<Reply::reply_type> send_command_async(Module* who, Command::command_type&& command);
 
-    // do NOT call from ISRs
-    void send_command_now(Command::command_type const& command);
-
     void forge_reply(Module* who, Reply::reply_type&& reply);
+
+    void reset_state() {
+        m_ready = false;
+        m_functional = false;
+        m_have_sim = false;
+        m_call_ready = false;
+        m_sms_ready = false;
+        m_state_inconsistent = false;
+    }
+
+    bool device_ready() const { return m_ready.load(); }
+    bool device_functional() const { return m_functional.load(); }
+    bool device_have_sim() const { return m_have_sim.load(); }
+    bool device_call_ready() const { return m_call_ready.load(); }
+    bool device_sms_ready() const { return m_sms_ready.load(); }
+    bool device_inconsistent_state() const { return m_state_inconsistent.load(); }
 
 protected:
     [[noreturn]] void operator()() override;
@@ -82,15 +99,26 @@ private:
     TransmitTask& m_transmit_task;
 
     std::vector<Module*> m_registered_modules {};
-    std::atomic_uint32_t next_command_order = 0;
 
-    std::array<char, 1024> m_line_buffer {};
+    std::array<char, 1024> m_line_buffer;
 
+    uint16_t m_uart_rx_offset = 0;
     std::array<uint8_t, 32> m_uart_rx_buffer;
 
     std::array<uint8_t, k_queue_size * sizeof(queue_elem_type)> m_queue_storage;
     StaticQueue_t m_static_queue;
     QueueHandle_t m_queue_handle = nullptr;
+
+    // higher level control
+
+    std::atomic_bool m_ready = false;
+    std::atomic_bool m_functional = false;
+    std::atomic_bool m_have_sim = false;
+    std::atomic_bool m_call_ready = false;
+    std::atomic_bool m_sms_ready = false;
+    std::atomic_bool m_state_inconsistent = false;
+
+    void send_command_now(Command::command_type const& command);
 
     void fullfill_command(CommandElement&& cmd, std::span<Reply::reply_type> replies);
 };

@@ -17,16 +17,26 @@ static std::atomic_int32_t timestamp_base = 0;
 
 namespace Tele {
 
+uint64_t millis() {
+    const HAL_TickFreqTypeDef freq = HAL_GetTickFreq();
+    const uint32_t ticks = HAL_GetTick();
+    const uint64_t milliseconds = static_cast<uint64_t>(freq) * ticks;
+
+    return milliseconds;
+}
+
 void set_time(int32_t timestamp) {
-    timestamp_base = timestamp;
+    timestamp_base.store(timestamp - static_cast<int32_t>(millis() / 1000), std::memory_order_relaxed);
+}
+
+int32_t get_time() {
+    return timestamp_base.load(std::memory_order_relaxed) + static_cast<int32_t>(millis() / 1000);
 }
 
 }
 
 extern "C" void _gettimeofday(struct timeval* tv, void*) {
-    const HAL_TickFreqTypeDef freq = HAL_GetTickFreq();
-    const uint32_t ticks = HAL_GetTick();
-    const uint64_t milliseconds = static_cast<uint64_t>(freq) * ticks;
+    const uint64_t milliseconds = Tele::millis();
 
     tv->tv_sec = static_cast<long>(milliseconds / 1000L) + timestamp_base;
     tv->tv_usec = static_cast<long>(milliseconds % 1000L) * 1000L;

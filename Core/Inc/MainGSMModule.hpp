@@ -1,15 +1,27 @@
 #pragma once
 
+#include <memory>
+
+#include <Tele/GPSTask.hpp>
 #include <Tele/GSMCoordinator.hpp>
+#include <Tele/GyroTask.hpp>
 #include <Packets.hpp>
 #include <PacketForger.hpp>
 
-namespace GSM {
+namespace Tele::GSM {
+
+struct CustomGyroTask;
 
 struct MainModule
     : Module
-    , Tele::StaticTask<4096> {
+    , Task<4096, true> {
+    friend struct CustomGyroTask;
+
+    MainModule(Tele::PacketForgerTask& packet_forger);
+
     virtual ~MainModule() override = default;
+
+    void isr_gyro_notify();
 
     void create(const char* name) final override;
 
@@ -18,21 +30,19 @@ struct MainModule
 protected:
     [[noreturn]] void operator()() final override;
 
-private:
-    volatile bool m_ready = false;
-    volatile bool m_functional = false;
-    volatile bool m_have_sim = false;
-    volatile bool m_call_ready = false;
-    volatile bool m_sms_ready = false;
-    volatile bool m_bearer_open = false;
-    volatile bool m_gprs_open = false;
+    void isr_gyro_new(Stf::Vector<uint16_t, 3> raw);
 
-    Tele::PacketForgerTask m_packet_forger {};
+private:
+    Tele::PacketForgerTask& m_packet_forger;
+
+    std::unique_ptr<Tele::GyroTask> m_gyro_task;
     std::optional<Reply::HTTPResponseReady> m_last_http_response {};
 
-    void reset_state();
+    std::atomic_bool m_gyro_guard;
+    Stf::Vector<uint16_t, 3> m_gyro_data;
 
     bool initialize_device();
+
     bool initialize_session(std::span<uint32_t, 4> out_rng_vector);
     int packet_loop();
     int main();

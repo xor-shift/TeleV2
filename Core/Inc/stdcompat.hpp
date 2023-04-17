@@ -47,5 +47,6 @@ using __int128_t = int64_t;
 namespace Tele {
 
 void set_time(int32_t timestamp);
+int32_t get_time();
 
 }

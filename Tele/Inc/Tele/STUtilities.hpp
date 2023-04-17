@@ -1,11 +1,13 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <span>
 #include <string_view>
 #include <vector>
 
 #include <cmsis_os.h>
+#include <main.h>
 
 namespace Tele {
 
@@ -54,7 +56,7 @@ template<typename T, typename Fn> constexpr size_t in_chunks(std::span<T> span, 
         span = span.subspan(real_sz);
     }
 
-    return executions;
+    return executions - 1;
 }
 
 ResetCause get_reset_cause();
@@ -63,5 +65,39 @@ ResetCause get_reset_cause();
 std::span<TaskStatus_t> get_tasks(std::span<TaskStatus_t> storage);
 
 std::vector<TaskStatus_t> get_tasks();
+
+struct Spinlock {
+    /// @remarks
+    /// This function is interrupt safe
+    /// This function is thread safe
+    bool try_lock() {
+        bool expected = false;
+        return m_lock.compare_exchange_weak(expected, true, std::memory_order_acquire);
+    }
+
+    /// @remarks
+    /// This function must be called from a FreeRTOS thread.\n
+    /// This function is not interrupt safe
+    /// This function is thread safe
+    void lock() {
+        while (!try_lock()) {
+            taskYIELD();
+        }
+    }
+
+    void release() { m_lock.store(false, std::memory_order_release); }
+
+private:
+    std::atomic_bool m_lock { false };
+};
+
+inline bool debugger_attached() {
+    return (CoreDebug->DHCSR & CoreDebug_DHCSR_C_DEBUGEN_Msk) != 0;
+}
+
+[[gnu::always_inline]] inline void breakpoint() {
+    if (debugger_attached())
+        asm volatile("bkpt");
+}
 
 }

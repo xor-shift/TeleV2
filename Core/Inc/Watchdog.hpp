@@ -15,23 +15,23 @@ struct InterRebootData {
 
     uint32_t crc_sum;
 
-    uint32_t self_check() volatile;
+    uint32_t self_check();
 
     /// @return
     /// true if there was an initialization.
-    bool initialize_if_needed() volatile;
+    bool initialize_if_needed();
 
-    void catched_fire(uint32_t status, const char* who) volatile;
+    void catched_fire(uint32_t status, const char* who);
 };
 
-extern volatile InterRebootData g_inter_reboot_data;
+extern InterRebootData g_inter_reboot_data;
 
-struct DiagnosticWatchdogTask : Tele::StaticTask<2048> {
+struct DiagnosticWatchdogTask : Tele::StaticTask<1024> {
     DiagnosticWatchdogTask();
 
     ~DiagnosticWatchdogTask() noexcept override = default;
 
-    void create(const char* name) override { StaticTask::create(name); }
+    void create(const char* name) override { Task::create(name); }
 
 protected:
     [[noreturn]] void operator()() override;
